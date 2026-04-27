@@ -104,6 +104,19 @@ export interface CreateOrUpdateSpaceInput {
   tier: number;
 }
 
+export interface GetOrInitUserInput {
+  user: string;
+  name?: string;
+}
+
+export interface Concept {
+  id?: string;
+  type?: string;
+  name?: string;
+  attributes?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+}
+
 export interface ModelConfig {
   family: string; // "gemini", "anthropic", "openai", "deepseek", "mimo" etc.
   model: string;
@@ -294,6 +307,13 @@ export interface KipResponse<T> {
 - 鉴权：SpaceToken/CWT `read`（公开空间免鉴权，私有空间需有效 token）
 - 请求体：`KipRequest`
 - 响应：`KipResponse<T>`（根据请求中的命令不同，返回不同的结果类型）
+
+### POST `/v1/{space_id}/get_or_init_user`
+
+- 作用：按给定 principal 获取或初始化用户 Concept 节点
+- 鉴权：SpaceToken/CWT `write`
+- 请求体：`GetOrInitUserInput`
+- 响应：`Concept`（直接返回对象，不包裹在 `RpcResponse` 中）
 
 ### GET `/v1/{space_id}/info`
 

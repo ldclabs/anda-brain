@@ -44,12 +44,12 @@ struct Cli {
     #[arg(long, env = "ED25519_PUBKEYS", default_value = "")]
     ed25519_pubkeys: String,
 
-    /// AI model family (e.g., "gemini", "anthropic", "openai", "deepseek", "mimo")
-    #[arg(long, env = "MODEL_FAMILY", default_value = "gemini")]
+    /// AI model family (e.g., "gemini", "anthropic", "openai")
+    #[arg(long, env = "MODEL_FAMILY", default_value = "anthropic")]
     model_family: String,
 
     /// AI model name (e.g., "gemini-3-flash-preview", "claude-sonnet-4-6")
-    #[arg(long, env = "MODEL_NAME", default_value = "gemini-3-flash-preview")]
+    #[arg(long, env = "MODEL_NAME", default_value = "deepseek-v4-pro")]
     model_name: String,
 
     /// API key for AI model
@@ -60,7 +60,7 @@ struct Cli {
     #[arg(
         long,
         env = "MODEL_API_BASE",
-        default_value = "https://generativelanguage.googleapis.com/v1beta/models"
+        default_value = "https://api.deepseek.com/anthropic"
     )]
     model_api_base: String,
 
@@ -198,7 +198,7 @@ async fn main() -> Result<(), BoxError> {
     };
 
     let db_config = DBConfig {
-        name: "test".to_string(),
+        name: "test".to_string(), // This is placeholder. The real name is space_id.
         description: "Anda Hippocampus database".to_string(),
         storage: StorageConfig {
             cache_max_capacity: 100000,
@@ -245,6 +245,10 @@ async fn main() -> Result<(), BoxError> {
         .route(
             "/v1/{space_id}/execute_kip_readonly",
             routing::post(execute_kip_readonly),
+        )
+        .route(
+            "/v1/{space_id}/get_or_init_user",
+            routing::post(get_or_init_user),
         )
         .route(
             "/v1/{space_id}/conversations/{conversation_id}",
@@ -325,6 +329,7 @@ async fn main() -> Result<(), BoxError> {
     });
 
     log::warn!(
+        target: "hippocampus",
         "start service {}@{} on {:?}, sharding: {}, managers: {}, DB type: {}, Model: {}.",
         APP_NAME,
         APP_VERSION,
@@ -362,7 +367,7 @@ async fn shutdown_signal(cancel_token: CancellationToken) {
         _ = terminate => {},
     }
 
-    log::warn!("received termination signal, starting graceful shutdown");
+    log::warn!(target: "hippocampus", "received termination signal, starting graceful shutdown");
     cancel_token.cancel();
 }
 

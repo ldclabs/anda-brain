@@ -187,6 +187,7 @@ impl Agent<AgentCtx> for MaintenanceAgent {
 impl MaintenanceAgent {
     async fn mark_conversation_failed(&self, conversation: &mut Conversation, reason: String) {
         log::error!(
+            target: "hippocampus",
             "Maintenance conversation {} failed: {}",
             conversation._id,
             reason
@@ -315,6 +316,7 @@ impl MaintenanceAgent {
                         }
                         Err(err) => {
                             log::error!(
+                                target: "hippocampus",
                                 "Failed to serialize maintenance conversation {} changes: {:?}",
                                 conversation._id,
                                 err

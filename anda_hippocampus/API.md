@@ -104,6 +104,19 @@ export interface CreateOrUpdateSpaceInput {
   tier: number;
 }
 
+export interface GetOrInitUserInput {
+  user: string;
+  name?: string;
+}
+
+export interface Concept {
+  id?: string;
+  type?: string;
+  name?: string;
+  attributes?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+}
+
 export interface ModelConfig {
   family: string; // "gemini", "anthropic", "openai", "deepseek", "mimo" etc.
   model: string;
@@ -294,6 +307,13 @@ export interface KipResponse<T> {
 - Auth: SpaceToken/CWT `read` (public spaces are unauthenticated; private spaces require a valid token)
 - Request body: `KipRequest`
 - Response: `KipResponse<T>` (returns different result types based on the commands
+
+### POST `/v1/{space_id}/get_or_init_user`
+
+- Purpose: Get or initialize a user concept node for the given principal
+- Auth: SpaceToken/CWT `write`
+- Request body: `GetOrInitUserInput`
+- Response: `Concept` (raw object, not wrapped in `RpcResponse`)
 
 ### GET `/v1/{space_id}/info`
 

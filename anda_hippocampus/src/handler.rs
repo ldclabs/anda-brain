@@ -333,6 +333,54 @@ pub async fn execute_kip_readonly(
     Ok(ct.response(rt))
 }
 
+/// POST /v1/{space_id}/get_or_init_user
+pub async fn get_or_init_user(
+    State(app): State<AppState>,
+    Path(space_id): Path<String>,
+    Accept(ct, _): Accept,
+    HeaderVals(token, sharding): HeaderVals,
+    body: Bytes,
+) -> Result<impl IntoResponse, AppError> {
+    if sharding != app.sharding {
+        return Err(AppError::bad_request(format!(
+            "space_id sharding {} does not match server sharding {}",
+            sharding, app.sharding
+        )));
+    }
+
+    let input: StringOr<GetOrInitUserInput> =
+        ct.parse_body(&body).map_err(AppError::bad_request)?;
+    let input = input
+        .value()
+        .map_err(|_| AppError::bad_request("invalid input"))?;
+
+    let now_ms = unix_ms();
+    let t = app
+        .check_auth_if(&token, &space_id, TokenScope::Write, now_ms)
+        .map_err(|_| AppError::unauthorized())?;
+
+    let space = app
+        .load_space(&space_id, false)
+        .await
+        .map_err(AppError::bad_request)?;
+
+    if t.is_none() {
+        // 如果没有验证 CWToken，则验证 SpaceToken
+        space
+            .verify_space_token(token, TokenScope::Write, now_ms)
+            .map_err(|_| AppError::unauthorized())?;
+    }
+
+    // anda_cognitive_nexus::entity::Concept
+    let concept = space
+        .memory
+        .get_or_init_caller(&input.user, input.name)
+        .await
+        .map_err(AppError::bad_request)?;
+
+    Ok(ct.response(concept))
+}
+
 /// GET /v1/{space_id}/conversations/{conversation_id}
 pub async fn get_conversation(
     State(app): State<AppState>,

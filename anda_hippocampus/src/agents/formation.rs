@@ -2,7 +2,7 @@ use anda_core::{
     Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, Document, Documents, Message,
     Resource, StateFeatures, Tool, estimate_tokens,
 };
-use anda_db::schema::DocumentId;
+use anda_db::schema::{DocumentId, Json, Map};
 use anda_engine::{
     context::AgentCtx,
     extension::note::{NoteTool, load_notes},
@@ -20,6 +20,7 @@ use std::{
 };
 
 use super::{HippocampusHook, SYSTEM_PROMPT_DYNAMIC_BOUNDARY};
+use crate::types::FormationInput;
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusFormation.md");
 const REVIEW_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusFormationReview.md");
@@ -69,6 +70,29 @@ impl FormationAgent {
             .get_extension_as::<DocumentId>("hippocampus_processed")
     }
 
+    pub async fn get_or_init_counterparty(
+        &self,
+        counterparty: String,
+        name: Option<String>,
+    ) -> Result<Json, BoxError> {
+        let mut attributes = Map::new();
+        let mut metadata = Map::new();
+        attributes.insert("id".to_string(), counterparty.clone().into());
+        attributes.insert("person_class".to_string(), "Human".into());
+        if let Some(name) = name {
+            attributes.insert("name".to_string(), name.into());
+        }
+        metadata.insert("author".to_string(), "$system".into());
+        metadata.insert("status".to_string(), "active".into());
+        let user = self
+            .memory
+            .nexus
+            .get_or_init_concept("Person".to_string(), counterparty, attributes, metadata)
+            .await?;
+
+        Ok(user.to_concept_node())
+    }
+
     pub async fn start_process(
         &self,
         ctx: AgentCtx,
@@ -105,6 +129,7 @@ impl FormationAgent {
             .is_err()
         {
             log::info!(
+                target: "hippocampus",
                 "FormationAgent is already processing conversation {}, cannot process conversation {}",
                 self.processing_conversation.load(Ordering::SeqCst),
                 conversation._id
@@ -143,6 +168,7 @@ impl FormationAgent {
 
             if conversation.status != ConversationStatus::Completed {
                 log::error!(
+                    target: "hippocampus",
                     "Conversation {} ended with status {:?}, not marking as processed",
                     conv_id,
                     conversation.status
@@ -160,6 +186,7 @@ impl FormationAgent {
 
             if let Some(id) = self.hook.try_start_maintenance(conv_id).await {
                 log::info!(
+                    target: "hippocampus",
                     "Triggered maintenance for conversation {}, new maintenance conversation {}",
                     conv_id,
                     id
@@ -232,7 +259,7 @@ impl FormationAgent {
     }
 
     async fn mark_conversation_failed(&self, conversation: &mut Conversation, reason: String) {
-        log::error!("Conversation {} failed: {}", conversation._id, reason);
+        log::error!(target: "hippocampus", "Conversation {} failed: {}", conversation._id, reason);
         conversation.failed_reason = Some(reason);
         conversation.status = ConversationStatus::Failed;
         conversation.updated_at = unix_ms();
@@ -260,6 +287,15 @@ impl FormationAgent {
             }
         };
 
+        let counterparty_info = if let Ok(input) = serde_json::from_str::<FormationInput>(&prompt)
+            && let Some(ctx) = input.context
+            && let Some(counterparty) = ctx.counterparty
+        {
+            self.get_or_init_counterparty(counterparty, None).await.ok()
+        } else {
+            None
+        };
+
         let now_ms = unix_ms();
         // add history conversations to provide more context for recall
         let chat_history: Vec<Document> = { self.history.read().iter().cloned().collect() };
@@ -284,11 +320,12 @@ impl FormationAgent {
         let mut runner = ctx.clone().completion_iter(
             CompletionRequest {
                 instructions: format!(
-                    "{}\n\n{}\n\n---\n\n# `DESCRIBE PRIMER` Result:\n{}\n\n---\n\n# Your notes:\n{}\n\n# Current datetime: {}",
+                    "{}\n\n{}\n\n---\n\n# `DESCRIBE PRIMER` Result:\n{}\n\n---\n\n# Your notes:\n{}\n\n# Counterparty profile:\n{}\n\n# Current datetime: {}",
                     SELF_INSTRUCTIONS,
                     SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
                     primer,
                     serde_json::to_string(&notes.notes).unwrap_or_default(),
+                    serde_json::to_string(&counterparty_info).unwrap_or_default(),
                     rfc3339_datetime(now_ms).unwrap_or_else(|| format!("{now_ms} in unix ms"))
                 ),
                 prompt: prompt.clone(),
@@ -363,6 +400,7 @@ impl FormationAgent {
                         }
                         Err(err) => {
                             log::error!(
+                                target: "hippocampus",
                                 "Failed to serialize formation conversation {} changes: {:?}",
                                 conversation._id,
                                 err

@@ -15,7 +15,7 @@ var (
 	token   string
 )
 
-const Version = "0.4.5"
+const Version = "0.4.8"
 
 func newClient() *api.Client {
 	return api.NewClient(baseURL, spaceID, token)

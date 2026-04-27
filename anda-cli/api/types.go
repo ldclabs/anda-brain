@@ -561,6 +561,19 @@ type CreateOrUpdateSpaceInput struct {
 	Tier    int    `json:"tier"`
 }
 
+type GetOrInitUserInput struct {
+	User string  `json:"user"`
+	Name *string `json:"name,omitempty"`
+}
+
+type Concept struct {
+	ID         string         `json:"id,omitempty"`
+	Type       string         `json:"type,omitempty"`
+	Name       string         `json:"name,omitempty"`
+	Attributes map[string]any `json:"attributes,omitempty"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
+}
+
 type SpaceTier struct {
 	Tier      int   `json:"tier"`
 	UpdatedAt int64 `json:"updated_at"`

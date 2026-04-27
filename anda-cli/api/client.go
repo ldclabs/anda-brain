@@ -153,6 +153,19 @@ func (c *Client) ExecuteKIPReadonly(ctx context.Context, input *KipRequest) (*Ki
 	return &resp, nil
 }
 
+// GetOrInitUser gets or initializes a caller concept.
+func (c *Client) GetOrInitUser(ctx context.Context, input *GetOrInitUserInput) (*Concept, error) {
+	data, err := c.doJSON(ctx, http.MethodPost, c.spacePath("/get_or_init_user"), input)
+	if err != nil {
+		return nil, err
+	}
+	var concept Concept
+	if err := json.Unmarshal(data, &concept); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return &concept, nil
+}
+
 // GetSpaceInfo returns space information.
 func (c *Client) GetSpaceInfo(ctx context.Context) (*RpcResponse[SpaceInfo], error) {
 	data, err := c.doJSON(ctx, http.MethodGet, c.spacePath("/info"), nil)

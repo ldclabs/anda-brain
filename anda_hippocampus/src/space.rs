@@ -302,7 +302,7 @@ impl AppState {
                     for (id, entry) in spaces.iter() {
                         if let Some(space) = entry.cell.get()
                             && let Err(err) = space.db.close().await {
-                                log::error!(space_id = id; "flush on shutdown failed: {err:?}");
+                                log::error!(target: "hippocampus", space_id = id; "flush on shutdown failed: {err:?}");
                             }
                     }
                     return;
@@ -331,14 +331,14 @@ impl AppState {
                         self.spaces.write().await.remove(id);
                     }
                     if let Err(err) = space.db.close().await {
-                        log::error!(space_id = id; "flush before eviction failed: {err:?}");
+                        log::error!(target: "hippocampus", space_id = id; "flush before eviction failed: {err:?}");
                     } else {
-                        log::warn!(space_id = id; "space evicted due to inactivity");
+                        log::warn!(target: "hippocampus", space_id = id; "space evicted due to inactivity");
                     }
                 } else {
                     // Periodic flush for active spaces
                     if let Err(err) = space.flush().await {
-                        log::error!(space_id = id; "periodic flush failed: {err:?}");
+                        log::error!(target: "hippocampus", space_id = id; "periodic flush failed: {err:?}");
                     }
                 }
             }
@@ -1073,7 +1073,7 @@ impl HippocampusHook for Hooks {
                     return rt.conversation;
                 }
                 Err(err) => {
-                    log::error!(formation_id; "scheduled maintenance failed to start: {}", err);
+                    log::error!(target: "hippocampus", formation_id; "scheduled maintenance failed to start: {}", err);
                 }
             }
         }
@@ -1094,7 +1094,7 @@ async fn init_nexus_kip(nexus: &CognitiveNexus) -> Result<(), KipError> {
         let kml = &[PERSON_SELF_KIP, PERSON_SYSTEM_KIP].join("\n");
 
         let result = nexus.execute_kml(parse_kml(kml)?, false).await?;
-        log::info!(result:serde = result; "Init $self and $system");
+        log::info!(target: "hippocampus", result:serde = result; "Init $self and $system");
     }
     Ok(())
 }

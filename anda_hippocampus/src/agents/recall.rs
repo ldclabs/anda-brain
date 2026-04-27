@@ -1,6 +1,6 @@
 use anda_core::{
     Agent, AgentContext, AgentOutput, BoxError, CompletionFeatures, CompletionRequest, Document,
-    Documents, FunctionDefinition, Message, Resource, StateFeatures,
+    Documents, FunctionDefinition, Json, Message, Resource, StateFeatures,
 };
 use anda_engine::{
     context::AgentCtx,
@@ -12,49 +12,53 @@ use anda_engine::{
     rfc3339_datetime, unix_ms,
 };
 use parking_lot::RwLock;
-use serde_json::json;
+use serde_json::{Map, json};
 use std::{
     collections::VecDeque,
     sync::{Arc, LazyLock},
 };
 
 use super::{HippocampusHook, SELF_USER_ID, SYSTEM_PROMPT_DYNAMIC_BOUNDARY};
+use crate::types::RecallInput;
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusRecall.md");
 
 pub static FUNCTION_DEFINITION: LazyLock<FunctionDefinition> = LazyLock::new(|| {
     serde_json::from_value(json!({
         "name": "recall_memory",
-        "description": "Recall information from your long-term memory (Cognitive Nexus). Send a natural language query describing what you want to remember or look up — the memory system will search and return relevant knowledge, including facts, preferences, relationships, past events, and any other stored information. Use this whenever you need context from previous interactions or stored knowledge to answer the user's question.",
+        "description": "Recall information from the assistant's long-term memory (the Cognitive Nexus owned by $self). Send a natural language query describing what you want to remember or look up — the memory system will search and return relevant knowledge, including facts, preferences, relationships, past events, self-reflective insights, and other stored information. Use this whenever you need context from previous interactions or stored knowledge to answer the current conversation.",
         "parameters": {
             "type": "object",
             "properties": {
-            "query": {
-                "type": "string",
-                "description": "A natural language question or description of what information to retrieve from memory. Be specific and include relevant context. Examples: 'What are Alice's communication preferences?', 'What happened in our last discussion about Project Aurora?', 'Who are the members of the engineering team?', 'What decisions were made about the pricing strategy?'"
-            },
-            "context": {
-                "type": "object",
-                "description": "Optional current conversational context to help narrow the search. Provide any relevant identifiers or topic hints that could improve retrieval accuracy.",
-                "properties": {
-                "user": {
+                "query": {
                     "type": "string",
-                    "description": "The identifier of the user currently being interacted with, if applicable."
+                    "description": "A natural language question or description of what information to retrieve from memory. Be specific and include relevant context. Examples: 'What do we know about the current user's communication preferences?', 'What happened in our last discussion about Project Aurora?', 'Who are the members of the engineering team?', 'What has the assistant learned about how to respond when the user asks for brevity?'"
                 },
-                "agent": {
-                    "type": "string",
-                    "description": "The identifier of the calling business agent, if applicable."
-                },
-                "topic": {
-                    "type": "string",
-                    "description": "The topic of the current conversation, to help disambiguate the query."
+                "context": {
+                    "type": "object",
+                    "description": "Optional current conversational context used only to disambiguate the query within $self's memory. It does not change the memory owner. Provide any relevant identifiers or scope hints that could improve retrieval accuracy.",
+                    "properties": {
+                        "counterparty": {
+                            "type": "string",
+                            "description": "Preferred. Durable identifier of the current external person or organization interacting with the business agent. Useful for resolving implicit references such as 'the current user', 'they', or omitted subjects."
+                        },
+                        "agent": {
+                            "type": "string",
+                            "description": "The identifier of the calling business agent, if applicable. Useful for provenance or caller-specific queries, but it does not change whose memory is searched."
+                        },
+                        "source": {
+                            "type": "string",
+                            "description": "Identifier of the current source, thread, channel, or app context. Useful when the query refers to a previous discussion in the same place."
+                        },
+                        "topic": {
+                            "type": "string",
+                            "description": "The topic of the current conversation, to help disambiguate the query."
+                        }
+                    }
                 }
-                }
-            }
             },
             "required": ["query"]
-        },
-        "strict": true
+        }
     })).unwrap()
 });
 
@@ -93,6 +97,29 @@ impl RecallAgent {
         *self.history.write() = conversations.into_iter().map(Document::from).collect();
         Ok(())
     }
+
+    pub async fn get_or_init_counterparty(
+        &self,
+        counterparty: String,
+        name: Option<String>,
+    ) -> Result<Json, BoxError> {
+        let mut attributes = Map::new();
+        let mut metadata = Map::new();
+        attributes.insert("id".to_string(), counterparty.clone().into());
+        attributes.insert("person_class".to_string(), "Human".into());
+        if let Some(name) = name {
+            attributes.insert("name".to_string(), name.into());
+        }
+        metadata.insert("author".to_string(), "$system".into());
+        metadata.insert("status".to_string(), "active".into());
+        let user = self
+            .memory
+            .nexus
+            .get_or_init_concept("Person".to_string(), counterparty, attributes, metadata)
+            .await?;
+
+        Ok(user.to_concept_node())
+    }
 }
 
 /// Implementation of the [`Agent`] trait for RecallAgent.
@@ -124,6 +151,15 @@ impl Agent<AgentCtx> for RecallAgent {
     ) -> Result<AgentOutput, BoxError> {
         let caller = ctx.caller();
         let now_ms = unix_ms();
+
+        let counterparty_info = if let Ok(input) = serde_json::from_str::<RecallInput>(&prompt)
+            && let Some(ctx) = input.context
+            && let Some(counterparty) = ctx.counterparty
+        {
+            self.get_or_init_counterparty(counterparty, None).await.ok()
+        } else {
+            None
+        };
 
         // add history conversations to provide more context for recall
         let chat_history: Vec<Document> = { self.history.read().iter().cloned().collect() };
@@ -171,11 +207,12 @@ impl Agent<AgentCtx> for RecallAgent {
             .completion(
                 CompletionRequest {
                     instructions: format!(
-                        "{}\n\n{}\n\n---\n\n# `DESCRIBE PRIMER` Result:\n{}\n\n---\n\n# Your notes:\n{}\n\n# Current datetime: {}",
+                        "{}\n\n{}\n\n---\n\n# `DESCRIBE PRIMER` Result:\n{}\n\n---\n\n# Your notes:\n{}\n\n# Counterparty profile:\n{}\n\n# Current datetime: {}",
                         SELF_INSTRUCTIONS,
                         SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
                         primer,
                         serde_json::to_string(&notes.notes).unwrap_or_default(),
+                        serde_json::to_string(&counterparty_info).unwrap_or_default(),
                         rfc3339_datetime(now_ms).unwrap_or_else(|| format!("{now_ms} in unix ms"))
                     ),
                     prompt,

@@ -441,6 +441,12 @@ pub struct CreateOrUpdateSpaceInput {
     pub tier: u32,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct GetOrInitUserInput {
+    pub user: Principal,
+    pub name: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{SpaceToken, TokenScope};
