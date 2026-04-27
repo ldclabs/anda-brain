@@ -172,7 +172,7 @@ async fn main() -> Result<(), BoxError> {
         api_key: cli.model_api_key.clone(),
         api_base: cli.model_api_base.clone(),
         disabled: cli.model_api_key.is_empty(),
-        label: None,
+        labels: vec![],
         bearer_auth: false,
     };
     models.set_model(model_config.build_model(http_client.clone()));

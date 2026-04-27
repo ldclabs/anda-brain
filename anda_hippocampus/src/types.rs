@@ -141,7 +141,7 @@ impl From<ModelConfig> for EngineModelConfig {
             api_base: config.api_base,
             api_key: config.api_key,
             disabled: config.disabled,
-            label: config.label,
+            labels: config.label.map(|l| vec![l]).unwrap_or_default(),
             bearer_auth: config.bearer_auth,
         }
     }
