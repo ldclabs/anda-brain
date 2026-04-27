@@ -327,7 +327,7 @@ dependencies = [
 
 [[package]]
 name = "anda_hippocampus"
-version = "0.4.8"
+version = "0.4.9"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",

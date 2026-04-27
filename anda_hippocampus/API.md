@@ -313,7 +313,7 @@ export interface KipResponse<T> {
 - Purpose: Get or initialize a user concept node for the given principal
 - Auth: SpaceToken/CWT `write`
 - Request body: `GetOrInitUserInput`
-- Response: `Concept` (raw object, not wrapped in `RpcResponse`)
+- Response: `RpcResponse<Concept>`
 
 ### GET `/v1/{space_id}/info`
 

@@ -313,7 +313,7 @@ export interface KipResponse<T> {
 - 作用：按给定 principal 获取或初始化用户 Concept 节点
 - 鉴权：SpaceToken/CWT `write`
 - 请求体：`GetOrInitUserInput`
-- 响应：`Concept`（直接返回对象，不包裹在 `RpcResponse` 中）
+- 响应：`RpcResponse<Concept>`
 
 ### GET `/v1/{space_id}/info`
 

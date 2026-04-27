@@ -378,7 +378,7 @@ pub async fn get_or_init_user(
         .await
         .map_err(AppError::bad_request)?;
 
-    Ok(ct.response(concept))
+    Ok(ct.response(RpcResponse::success(concept)))
 }
 
 /// GET /v1/{space_id}/conversations/{conversation_id}

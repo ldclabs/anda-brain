@@ -27,12 +27,16 @@ Example:
 		}
 
 		client := newClient()
-		concept, err := client.GetOrInitUser(cmd.Context(), input)
+		resp, err := client.GetOrInitUser(cmd.Context(), input)
 		if err != nil {
 			exitError(err)
 		}
-
-		printJSON(concept)
+		if resp.Error != nil {
+			exitError(resp.Error)
+		}
+		if resp.Result != nil {
+			printJSON(resp.Result)
+		}
 	},
 }
 
