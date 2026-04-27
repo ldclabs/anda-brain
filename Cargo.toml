@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["anda_bot", "anda_hippocampus"]
+members = ["anda_hippocampus"]
 
 [workspace.package]
 description = "🧠 Anda Hippocampus (海马体) — Autonomous Graph Memory for AI Agents"
