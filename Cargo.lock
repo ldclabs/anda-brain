@@ -278,9 +278,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.11.21"
+version = "0.11.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81488410b742c9f7bc7353c520a8e17b64cadcbf68d6f5a09858e5f8b463bd22"
+checksum = "c7516ebcbb94f8b89f531ccdf8a36fd655d2a455a2048400a1b497def902547e"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -327,7 +327,7 @@ dependencies = [
 
 [[package]]
 name = "anda_hippocampus"
-version = "0.4.10"
+version = "0.4.11"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",
@@ -2873,9 +2873,9 @@ dependencies = [
 
 [[package]]
 name = "idna_adapter"
-version = "1.2.1"
+version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3acae9609540aa318d1bc588455225fb2085b9ed0c4f6bd0d9d5bcd86f1a0344"
+checksum = "cb68373c0d6620ef8105e855e7745e18b0d00d3bdb07fb532e434244cdb9a714"
 dependencies = [
  "icu_normalizer",
  "icu_properties",

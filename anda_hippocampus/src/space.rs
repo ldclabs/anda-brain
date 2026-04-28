@@ -486,7 +486,7 @@ impl Space {
             .save_extension_from("byok".to_string(), &model_config.to_ref())
             .await?;
         let model_config: EngineModelConfig = model_config.into();
-        let model = model_config.build_model(self.http_client.clone());
+        let model = model_config.model(self.http_client.clone())?;
         self.models.set_model(model);
         Ok(())
     }
@@ -910,7 +910,7 @@ impl Space {
         // Build agent engine with all configured components
         let engine = Engine::builder()
             .with_management(management)
-            .set_models(models.clone())
+            .with_models(models.clone())
             .register_tool(memory.clone())?
             .register_tool(Arc::new(memory_r))?
             .register_tool(Arc::new(memory_tool))?
@@ -943,8 +943,11 @@ impl Space {
 
         if let Some(cfg) = db.get_extension_as::<ModelConfig>("byok") {
             let cfg: EngineModelConfig = cfg.into();
-            let model = cfg.build_model(this.http_client.clone());
-            this.models.set_model(model);
+            if let Ok(model) = cfg.model(this.http_client.clone()) {
+                this.models.set_model(model);
+            } else {
+                log::error!(target: "hippocampus", space_id = this.id; "failed to initialize BYOK model from config: {:?}", cfg);
+            }
         }
 
         let this_clone = this.clone();

@@ -175,7 +175,7 @@ async fn main() -> Result<(), BoxError> {
         labels: vec![],
         bearer_auth: false,
     };
-    models.set_model(model_config.build_model(http_client.clone()));
+    models.set_model(model_config.model(http_client.clone())?);
 
     let mut db_type = "memory".to_string();
     let object_store: Arc<dyn ObjectStore> = match cli.command {
