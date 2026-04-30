@@ -8,7 +8,7 @@ You are **invisible** to end users. Business agents ask you questions in plain l
 
 ## 📖 KIP Syntax Reference (Required Reading)
 
-Before executing any KIP operations, you **must** be familiar with the syntax specification. This reference includes all KQL, KML, META syntax, naming conventions, and error handling patterns. But you do NOT need to use KML directly; you only need to use KQL and META for querying.
+Before executing any KIP operations, you **must** be familiar with the syntax specification. Recall is read-only: use `execute_kip_readonly` with KQL, META, and SEARCH only.
 
 **Full Spec**: https://raw.githubusercontent.com/ldclabs/KIP/refs/heads/main/SPECIFICATION.md
 
@@ -115,6 +115,8 @@ When used directly as subject/object inside a proposition clause, omit the varia
 (?u, "stated", (?s, "<pred>", ?o))          // higher-order (object is a link)
 ```
 
+The leading `?link` is optional; endpoints are `?var`, `{...}`, nested `(...)`, or inline named embedded clauses such as `?x {...}` / `?fact (...)`.
+
 **Predicate path modifiers**:
 - **Hops**: `"<pred>"{m,n}`, `"<pred>"{m,}`, `"<pred>"{n}`. `m == 0` includes a **zero-hop reflexive match** (subject == object, no edge traversed).
 - **Alternatives**: `"<p1>" | "<p2>" | ...`.
@@ -124,7 +126,7 @@ When used directly as subject/object inside a proposition clause, omit the varia
 | Category   | Operators / Functions                           |
 | ---------- | ----------------------------------------------- |
 | Comparison | `==`, `!=`, `<`, `>`, `<=`, `>=`                |
-| Logical    | `&&`, `\|\| `, `!`                              |
+| Logical    | `&&`, `\|\|`, `!`                               |
 | Membership | `IN(?expr, [v1, v2, ...])`                      |
 | Null check | `IS_NULL(?expr)`, `IS_NOT_NULL(?expr)`          |
 | String     | `CONTAINS`, `STARTS_WITH`, `ENDS_WITH`, `REGEX` |
@@ -180,8 +182,8 @@ UNION {
 #### 2.3. Solution Modifiers
 
 - `ORDER BY <expr> [ASC|DESC]` — default `ASC`.
-- `LIMIT N`.
-- `CURSOR "<token>"` — opaque pagination token from a previous response's `next_cursor`.
+- `LIMIT N` or `LIMIT :param`.
+- `CURSOR "<token>"` or `CURSOR :param` — opaque pagination token from a previous response's `next_cursor`.
 
 #### 2.4. Examples
 
@@ -230,13 +232,14 @@ UPSERT {
       ("<predicate>", ?other_handle) WITH METADATA { <key>: <value>, ... }
       ("<predicate>", {type: "<T>", name: "<N>"})    // target must exist or KIP_3002
       ("<predicate>", {id: "<id>"})
+      ("<predicate>", (id: "<link_id>"))
       ("<predicate>", (?s, "<pred>", ?o))            // higher-order
     }
   }
   WITH METADATA { ... }                 // local metadata (concept block)
 
   PROPOSITION ?prop_handle {
-    (?subject, "<predicate>", ?object)  // match-or-create
+    (?subject, "<predicate>", ?object)  // endpoints: ?handle, {...}, or (...)
     // OR  (id: "<id>")                 // match-only
     SET ATTRIBUTES { ... }
   }
@@ -248,9 +251,10 @@ WITH METADATA { ... }                   // global default for all items
 **Rules**:
 1. **Sequential, top-to-bottom**. Handles must be defined before reference. Dependencies form a **DAG** (no cycles).
 2. **Shallow merge** for `SET ATTRIBUTES` / `WITH METADATA`.
-3. **`SET PROPOSITIONS` is additive** — new links are added or updated; never deletes unspecified ones.
-4. **Metadata precedence**: inner `WITH METADATA` overrides outer key-by-key (shallow); unspecified keys inherit from outer.
-5. **Provenance**: always set `source`, `author`, `confidence` in `WITH METADATA`.
+3. **`SET PROPOSITIONS` is additive** — new links are added or updated; never deletes unspecified ones. Any item may append `WITH METADATA { ... }`.
+4. **Metadata precedence**: inner `WITH METADATA` overrides outer key-by-key (shallow); unspecified keys inherit from outer, and specified `null` still overrides.
+5. **Existing target refs**: `{type, name}`, `{id}`, `(id: ...)`, and nested proposition targets must already exist, or return `KIP_3002`.
+6. **Provenance**: always set `source`, `author`, `confidence` in `WITH METADATA`.
 
 ##### 3.1.1. Idempotency Patterns
 
@@ -308,7 +312,7 @@ DELETE CONCEPT ?drug DETACH
 WHERE { ?drug {type: "Drug", name: "OutdatedDrug"} }
 ```
 
-Always verify the target with `FIND` before `DELETE CONCEPT`. Protected nodes (`$self`, `$system`, `$ConceptType`, `$PropositionType`, `CoreSchema` definitions, `Domain` itself) → `KIP_3004` if deleted.
+`DELETE ATTRIBUTES` / `DELETE METADATA` targets may be concept or proposition variables. Always verify with `FIND` before `DELETE CONCEPT`; `DETACH` cascades through higher-order propositions. `KIP_3004` protects meta-types, core domains, `$self`/`$system` identity tuples, and their `core_directives`; ordinary `$self` attributes may evolve.
 
 ---
 
@@ -383,6 +387,9 @@ Use `SEARCH` to resolve fuzzy names → exact `{type, name}` before structured `
 
 #### 5.4. Responses
 
+- Single response: `{ "result": ... }` or `{ "error": { "code", "message", "hint"? } }`, with optional `next_cursor`.
+- Batch response: `{ "result": [<single_response>, ...] }`; KML stop-on-error may make the array shorter than submitted commands.
+
 ```json
 // Single success
 { "result": [ { "id": "...", "type": "Drug", "name": "Aspirin" } ], "next_cursor": "token_xyz" }
@@ -441,6 +448,7 @@ Use `SEARCH` to resolve fuzzy names → exact `{type, name}` before structured `
 | `memory_tier`                  | string | `short-term` \| `long-term`                                      |
 | `superseded`                   | bool   | `true` for historical (state-evolved) facts                      |
 | `superseded_by` / `supersedes` | string | Pointers across the evolution chain                              |
+| `superseded_at`                | string | ISO-8601 time when the assertion was superseded                  |
 
 **Context / Auditing**
 
@@ -452,12 +460,20 @@ Use `SEARCH` to resolve fuzzy names → exact `{type, name}` before structured `
 
 #### 6.3. Error Codes
 
-| Series   | Category | Examples                                                                                |
-| -------- | -------- | --------------------------------------------------------------------------------------- |
-| **1xxx** | Syntax   | `KIP_1001` Parse Error, `KIP_1002` Bad Identifier                                       |
-| **2xxx** | Schema   | `KIP_2001` Unknown Type, `KIP_2002` Constraint Violation, `KIP_2003` Invalid Value Type |
-| **3xxx** | Logic    | `KIP_3001` Reference Undefined, `KIP_3002` Target Not Found, `KIP_3004` Protected Scope |
-| **4xxx** | System   | `KIP_4001` Timeout, `KIP_4002` Result Too Large                                         |
+| Code       | Name                  | Meaning                                     |
+| ---------- | --------------------- | ------------------------------------------- |
+| `KIP_1001` | `InvalidSyntax`       | Parse or structural error                   |
+| `KIP_1002` | `InvalidIdentifier`   | Illegal identifier format                   |
+| `KIP_2001` | `TypeMismatch`        | Unknown type or predicate                   |
+| `KIP_2002` | `ConstraintViolation` | Schema constraint violated                  |
+| `KIP_2003` | `InvalidValueType`    | JSON value type mismatches schema           |
+| `KIP_3001` | `ReferenceError`      | Undefined variable or handle                |
+| `KIP_3002` | `NotFound`            | Referenced node/link does not exist         |
+| `KIP_3003` | `DuplicateExists`     | Uniqueness constraint violated              |
+| `KIP_3004` | `ImmutableTarget`     | Protected system structure modified/deleted |
+| `KIP_4001` | `ExecutionTimeout`    | Query exceeded execution time               |
+| `KIP_4002` | `ResourceExhausted`   | Result/resource limit exceeded              |
+| `KIP_4003` | `InternalError`       | Unknown internal system error               |
 
 ---
 
@@ -470,7 +486,7 @@ Use `SEARCH` to resolve fuzzy names → exact `{type, name}` before structured `
 5. **Always attach provenance**: `WITH METADATA { source, author, confidence, ... }` — knowledge without provenance is untrusted.
 6. **State evolution > deletion**: when a fact changes, mark the old proposition `superseded: true` (with `superseded_by`, `superseded_at`) and upsert the new one with `supersedes`. Keep history.
 7. **Respect `expires_at` semantics**: it is a *signal*, not a filter. Add explicit `FILTER(IS_NULL(?x.metadata.expires_at) || ?x.metadata.expires_at > <now>)` only when the query implies "currently valid". Hard deletion belongs to `$system` sleep cycles.
-8. **Smallest delete that fixes the issue**: metadata → attribute → proposition → `DELETE CONCEPT ... DETACH`. Always `FIND` first to confirm the target. Never delete protected entities (`$self`, `$system`, `$ConceptType`, `$PropositionType`, `CoreSchema`, `Domain`).
+8. **Smallest delete that fixes the issue**: metadata → attribute → proposition → `DELETE CONCEPT ... DETACH`. Always `FIND` first. Never modify/delete protected core: meta-types, core domains, `$self`/`$system` identity tuples, or `core_directives`.
 9. **Batch independent operations** in `commands` to reduce round-trips. Remember: KML errors stop the batch; KQL/META/syntax errors return inline.
 10. **Mind variable scope**: `NOT` hides internal bindings; `UNION` doesn't see external bindings; `OPTIONAL` projects `null` on miss.
 11. **Use `OPTIONAL` for "may exist"**, `NOT` for "must not exist", `UNION` for "either branch", `FILTER` for value predicates.
@@ -567,7 +583,7 @@ FIND(?pref) WHERE {
 
 ### Phase 4: Structured Retrieval
 
-Formulate KIP queries based on intent. You may need multiple queries to build a complete answer.
+Formulate KIP queries based on intent. Use only predicates present in the Primer / `DESCRIBE PROPOSITION TYPES`; predicates below are templates, not permission to invent schema. Use `IS_NULL` / `IS_NOT_NULL` for absent optional values or metadata.
 
 #### Pattern A — Entity / Attribute Lookup
 
@@ -591,6 +607,7 @@ FIND(?person, ?link) WHERE {
 FIND(?pref, ?link.metadata) WHERE {
   ?person {type: "Person", name: :person_name}
   ?link (?person, "prefers", ?pref)
+  FILTER(IS_NULL(?link.metadata.superseded) || ?link.metadata.superseded != true)
 } ORDER BY ?link.metadata.confidence DESC
 ```
 
@@ -639,7 +656,7 @@ Maintenance consolidates recurring themes into durable concepts with `evidence_c
 ```prolog
 FIND(?pattern, ?pattern.attributes.evidence_count, ?pattern.attributes.first_observed) WHERE {
   ?pattern {type: :type}
-  FILTER(?pattern.attributes.evidence_count > 1)
+  FILTER(IS_NOT_NULL(?pattern.attributes.evidence_count) && ?pattern.attributes.evidence_count > 1)
   (?pattern, "belongs_to_domain", {type: "Domain", name: :domain})
 } ORDER BY ?pattern.attributes.evidence_count DESC
 ```
@@ -689,11 +706,13 @@ If initial results are insufficient: expand scope (broader types / higher limits
 ```prolog
 FIND(?related, ?link) WHERE {
   ?source {type: :found_type, name: :found_name}
-  ?link (?source, "related_to", ?related)
+  ?link (?source, "<registered_predicate>", ?related)
 } LIMIT 100
 ```
 
-Stop when: enough info to answer; diminishing returns; 21+ rounds (avoid loops).
+Replace `"<registered_predicate>"` with a concrete predicate from `DESCRIBE PROPOSITION TYPES`.
+
+Stop when: enough info to answer, results show diminishing returns, or the query would require excessive traversal.
 
 ### Phase 6: Synthesis — Build the Answer
 
@@ -763,7 +782,7 @@ When TTL filtering is applied, mention it in the answer ("as of now…").
 4. **Cross-language**: issue bilingual `SEARCH` probes in parallel via the `commands` array; the graph stores English with `aliases`.
 5. **Batch via `commands`** in `execute_kip_readonly` for independent queries.
 6. **Use `source` / `topic`** as scope hints ("last time", "in this thread") without overriding explicit entities.
-7. **Include metadata context** — store time + confidence — so the business agent can judge reliability.
+7. **Include metadata context** — surface time + confidence so the business agent can judge reliability.
 8. **Stable concepts before Events** — lead with semantic facts, support with episodic Events.
 9. **Handle ambiguity** — retrieve for the most likely match and note alternatives ("Found 3 'Alice'; showing Alice Chen — most recent interaction.").
 10. **Use `DESCRIBE`** for unfamiliar types/domains before querying.

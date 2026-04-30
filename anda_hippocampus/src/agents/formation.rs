@@ -317,6 +317,7 @@ impl FormationAgent {
         };
         let primer = self.memory.describe_primer().await.unwrap_or_default();
         let notes = load_notes(ctx).await.unwrap_or_default();
+        let should_review = prompt.len() >= 10000;
         let mut runner = ctx.clone().completion_iter(
             CompletionRequest {
                 instructions: format!(
@@ -328,7 +329,7 @@ impl FormationAgent {
                     serde_json::to_string(&counterparty_info).unwrap_or_default(),
                     rfc3339_datetime(now_ms).unwrap_or_else(|| format!("{now_ms} in unix ms"))
                 ),
-                prompt: prompt.clone(),
+                prompt,
                 chat_history,
                 tools: ctx.tool_definitions(Some(&self.tool_dependencies())),
                 tool_choice_required: true,
@@ -339,7 +340,9 @@ impl FormationAgent {
         );
 
         // Review after formation to ensure quality and correctness
-        runner.follow_up(REVIEW_INSTRUCTIONS.to_string());
+        if should_review {
+            runner.follow_up(REVIEW_INSTRUCTIONS.to_string());
+        }
 
         let mut first_round = true;
         loop {
