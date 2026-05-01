@@ -238,6 +238,7 @@ impl MaintenanceAgent {
             }]
         };
         let notes = load_notes(ctx).await.unwrap_or_default();
+        let max_output_tokens = (ctx.model.max_output / 2).max(10000);
         let mut runner = ctx.clone().completion_iter(
             CompletionRequest {
                 instructions: format!(
@@ -252,7 +253,7 @@ impl MaintenanceAgent {
                 chat_history,
                 tools: ctx.tool_definitions(Some(&self.tool_dependencies())),
                 tool_choice_required: true,
-                max_output_tokens: Some(8192),
+                max_output_tokens: Some(max_output_tokens),
                 ..Default::default()
             },
             vec![],

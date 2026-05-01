@@ -93,6 +93,12 @@ pub struct ModelConfig {
 
     #[serde(default, alias = "b")]
     pub bearer_auth: bool,
+
+    #[serde(default, alias = "cw")]
+    pub context_window: usize,
+
+    #[serde(default, alias = "mo")]
+    pub max_output: usize,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -117,6 +123,12 @@ pub struct ModelConfigRef<'a> {
 
     #[serde(rename = "b")]
     pub bearer_auth: bool,
+
+    #[serde(default, rename = "cw")]
+    pub context_window: usize,
+
+    #[serde(default, rename = "mo")]
+    pub max_output: usize,
 }
 
 impl ModelConfig {
@@ -129,6 +141,8 @@ impl ModelConfig {
             disabled: self.disabled,
             label: &self.label,
             bearer_auth: self.bearer_auth,
+            context_window: self.context_window,
+            max_output: self.max_output,
         }
     }
 }
@@ -143,6 +157,8 @@ impl From<ModelConfig> for EngineModelConfig {
             disabled: config.disabled,
             labels: config.label.map(|l| vec![l]).unwrap_or_default(),
             bearer_auth: config.bearer_auth,
+            context_window: config.context_window,
+            max_output: config.max_output,
         }
     }
 }

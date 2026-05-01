@@ -56,6 +56,12 @@ struct Cli {
     #[arg(long, env = "MODEL_API_KEY", default_value = "")]
     model_api_key: String,
 
+    #[arg(long, env = "MODEL_CONTEXT_WINDOW", default_value_t = 1000000)]
+    model_context_window: usize,
+
+    #[arg(long, env = "MODEL_MAX_OUTPUT", default_value_t = 384000)]
+    model_max_output: usize,
+
     /// API base URL for AI model
     #[arg(
         long,
@@ -171,6 +177,8 @@ async fn main() -> Result<(), BoxError> {
         model: cli.model_name.clone(),
         api_key: cli.model_api_key.clone(),
         api_base: cli.model_api_base.clone(),
+        context_window: cli.model_context_window,
+        max_output: cli.model_max_output,
         disabled: cli.model_api_key.is_empty(),
         labels: vec![],
         bearer_auth: false,

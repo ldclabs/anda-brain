@@ -24,7 +24,6 @@ use crate::types::FormationInput;
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusFormation.md");
 const REVIEW_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusFormationReview.md");
-const MAX_FORMATION_TOKENS: usize = 100_000;
 
 /// Resets the AtomicU64 to 0 on drop (panic guard for processing_conversation).
 struct ProcessingGuard(Arc<AtomicU64>);
@@ -318,6 +317,7 @@ impl FormationAgent {
         let primer = self.memory.describe_primer().await.unwrap_or_default();
         let notes = load_notes(ctx).await.unwrap_or_default();
         let should_review = prompt.len() >= 10000;
+        let max_output_tokens = (ctx.model.max_output / 2).max(10000);
         let mut runner = ctx.clone().completion_iter(
             CompletionRequest {
                 instructions: format!(
@@ -333,7 +333,7 @@ impl FormationAgent {
                 chat_history,
                 tools: ctx.tool_definitions(Some(&self.tool_dependencies())),
                 tool_choice_required: true,
-                max_output_tokens: Some(8192),
+                max_output_tokens: Some(max_output_tokens),
                 ..Default::default()
             },
             vec![],
@@ -452,11 +452,12 @@ impl Agent<AgentCtx> for FormationAgent {
     ) -> Result<AgentOutput, BoxError> {
         let caller = ctx.caller();
         let now_ms = unix_ms();
+        let max_fomation_tokens = (ctx.model.context_window / 2).max(100000);
         let token_count = estimate_tokens(&prompt);
-        if token_count > MAX_FORMATION_TOKENS {
+        if token_count > max_fomation_tokens {
             return Err(format!(
                 "Input too large: {} tokens (estimated), max allowed is {} tokens",
-                token_count, MAX_FORMATION_TOKENS
+                token_count, max_fomation_tokens
             )
             .into());
         }
