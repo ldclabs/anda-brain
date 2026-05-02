@@ -13,6 +13,14 @@ pub struct Pagination {
     pub collection: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct ConversationDeltaQuery {
+    pub messages_offset: Option<usize>,
+    pub artifacts_offset: Option<usize>,
+    /// Conversation collection: "recall", "maintenance".
+    pub collection: Option<String>,
+}
+
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub struct SpaceInfo {
     pub id: String,

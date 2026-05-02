@@ -648,6 +648,7 @@ type ConversationStatus string
 const (
 	StatusSubmitted ConversationStatus = "submitted"
 	StatusWorking   ConversationStatus = "working"
+	StatusIdle      ConversationStatus = "idle"
 	StatusCompleted ConversationStatus = "completed"
 	StatusFailed    ConversationStatus = "failed"
 	StatusCancelled ConversationStatus = "cancelled"
@@ -670,6 +671,17 @@ type Conversation struct {
 	SteeringMessages []string           `json:"steering_messages,omitempty"`
 	FollowUpMessages []string           `json:"follow_up_messages,omitempty"`
 	Ancestors        []int              `json:"ancestors,omitempty"`
+}
+
+type ConversationDelta struct {
+	ID           int                `json:"_id"`
+	Messages     []json.RawMessage  `json:"messages"`
+	Artifacts    []any              `json:"artifacts"`
+	Status       ConversationStatus `json:"status"`
+	Usage        Usage              `json:"usage"`
+	FailedReason *string            `json:"failed_reason,omitempty"`
+	UpdatedAt    int64              `json:"updated_at"`
+	Child        *int               `json:"child,omitempty"`
 }
 
 type ServiceInfo struct {

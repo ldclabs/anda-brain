@@ -774,7 +774,7 @@ impl Space {
         let nexus =
             CognitiveNexus::connect(db.clone(), async |nexus| init_nexus_kip(nexus).await).await?;
         let mut schema = Conversation::schema()?;
-        schema.with_version(3);
+        schema.with_version(4);
 
         let conversations = db
             .open_or_create_collection(

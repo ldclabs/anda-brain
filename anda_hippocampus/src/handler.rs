@@ -385,7 +385,7 @@ pub async fn get_or_init_user(
 pub async fn get_conversation(
     State(app): State<AppState>,
     Path((space_id, conversation_id)): Path<(String, String)>,
-    Query(pg): Query<Pagination>,
+    Query(dq): Query<ConversationDeltaQuery>,
     Accept(ct, _): Accept,
     HeaderVals(token, sharding): HeaderVals,
 ) -> Result<impl IntoResponse, AppError> {
@@ -417,10 +417,55 @@ pub async fn get_conversation(
     }
 
     let rt = space
-        .get_conversation(pg.collection, conversation_id)
+        .get_conversation(dq.collection, conversation_id)
         .await
         .map_err(AppError::bad_request)?;
     Ok(ct.response(RpcResponse::success(rt)))
+}
+
+/// GET /v1/{space_id}/conversations/{conversation_id}/delta
+pub async fn get_conversation_delta(
+    State(app): State<AppState>,
+    Path((space_id, conversation_id)): Path<(String, String)>,
+    Query(dq): Query<ConversationDeltaQuery>,
+    Accept(ct, _): Accept,
+    HeaderVals(token, sharding): HeaderVals,
+) -> Result<impl IntoResponse, AppError> {
+    if sharding != app.sharding {
+        return Err(AppError::bad_request(format!(
+            "space_id sharding {} does not match server sharding {}",
+            sharding, app.sharding
+        )));
+    }
+    let conversation_id: u64 = conversation_id
+        .parse()
+        .map_err(|_| AppError::bad_request("invalid conversation_id"))?;
+
+    let now_ms = unix_ms();
+    let t = app
+        .check_auth_if(&token, &space_id, TokenScope::Read, now_ms)
+        .map_err(|_| AppError::unauthorized())?;
+
+    let space = app
+        .load_space(&space_id, false)
+        .await
+        .map_err(AppError::bad_request)?;
+
+    if !space.is_public() && t.is_none() {
+        // 如果空间不是公开的，且没有验证 CWToken，则验证 SpaceToken
+        space
+            .verify_space_token(token, TokenScope::Read, now_ms)
+            .map_err(|_| AppError::unauthorized())?;
+    }
+
+    let rt = space
+        .get_conversation(dq.collection, conversation_id)
+        .await
+        .map_err(AppError::bad_request)?;
+    Ok(ct.response(RpcResponse::success(rt.into_delta(
+        dq.messages_offset.unwrap_or_default(),
+        dq.artifacts_offset.unwrap_or_default(),
+    ))))
 }
 
 /// GET /v1/{space_id}/conversations

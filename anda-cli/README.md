@@ -146,6 +146,11 @@ anda-cli --space-id my_space --token $TOKEN conversations list --limit 10
 
 # Get a specific conversation
 anda-cli --space-id my_space --token $TOKEN conversations get 42
+
+# Get incremental updates for a conversation
+anda-cli --space-id my_space --token $TOKEN conversations delta 42 \
+  --messages-offset 10 \
+  --artifacts-offset 2
 ```
 
 ### Space Management (requires CWT auth)

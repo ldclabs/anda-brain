@@ -199,6 +199,7 @@ export interface AgentOutput {
 export type ConversationStatus =
   | 'submitted'
   | 'working'
+  | 'idle'
   | 'completed'
   | 'failed'
   | 'cancelled';
@@ -220,6 +221,17 @@ export interface Conversation {
   steering_messages?: string[];
   follow_up_messages?: string[];
   ancestors?: number[];
+}
+
+export interface ConversationDelta {
+  _id: number;
+  messages: unknown[];
+  artifacts: unknown[];
+  status: ConversationStatus;
+  usage: Usage;
+  failed_reason?: string | null;
+  updated_at: number;
+  child?: number | null;
 }
 
 export interface ServiceInfo {
@@ -334,6 +346,16 @@ export interface KipResponse<T> {
 - Query:
   - `collection?: string` // 使用 "recall" 区分召回 vs 记忆会话
 - 响应：`RpcResponse<Conversation>`
+
+### GET `/v1/{space_id}/conversations/{conversation_id}/delta?collection=<collection>&messages_offset=<n>&artifacts_offset=<n>`
+
+- 作用：按客户端已消费的 offset 获取会话增量更新
+- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权，私有空间需有效 token）
+- Query:
+  - `collection?: string` // 使用 "recall" 或 "maintenance" 区分非默认会话集合
+  - `messages_offset?: number` // 仅返回该偏移量之后的新消息，默认 `0`
+  - `artifacts_offset?: number` // 仅返回该偏移量之后的新 artifacts，默认 `0`
+- 响应：`RpcResponse<ConversationDelta>`
 
 ### GET `/v1/{space_id}/conversations?collection=<collection>&cursor=<cursor>&limit=<n>`
 

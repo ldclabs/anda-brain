@@ -216,6 +216,34 @@ func (c *Client) GetConversation(ctx context.Context, conversationID int, collec
 	return &resp, nil
 }
 
+// GetConversationDelta returns incremental conversation updates since the given offsets.
+func (c *Client) GetConversationDelta(ctx context.Context, conversationID int, messagesOffset, artifactsOffset int, collection string) (*RpcResponse[ConversationDelta], error) {
+	path := fmt.Sprintf("%s/conversations/%d/delta", c.spacePath(""), conversationID)
+	params := url.Values{}
+	if messagesOffset > 0 {
+		params.Set("messages_offset", fmt.Sprintf("%d", messagesOffset))
+	}
+	if artifactsOffset > 0 {
+		params.Set("artifacts_offset", fmt.Sprintf("%d", artifactsOffset))
+	}
+	if collection != "" {
+		params.Set("collection", collection)
+	}
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+
+	data, err := c.doJSON(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp RpcResponse[ConversationDelta]
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return &resp, nil
+}
+
 // ListConversations lists conversations with pagination.
 func (c *Client) ListConversations(ctx context.Context, cursor string, limit int, collection string) (*RpcResponse[[]Conversation], error) {
 	path := c.spacePath("/conversations")

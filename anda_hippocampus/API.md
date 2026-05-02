@@ -199,6 +199,7 @@ export interface AgentOutput {
 export type ConversationStatus =
   | 'submitted'
   | 'working'
+  | 'idle'
   | 'completed'
   | 'failed'
   | 'cancelled';
@@ -220,6 +221,17 @@ export interface Conversation {
   steering_messages?: string[];
   follow_up_messages?: string[];
   ancestors?: number[];
+}
+
+export interface ConversationDelta {
+  _id: number;
+  messages: unknown[];
+  artifacts: unknown[];
+  status: ConversationStatus;
+  usage: Usage;
+  failed_reason?: string | null;
+  updated_at: number;
+  child?: number | null;
 }
 
 export interface ServiceInfo {
@@ -334,6 +346,16 @@ export interface KipResponse<T> {
 - Query:
   - `collection?: string` // use "recall" to distinguish recall vs memory conversations
 - Response: `RpcResponse<Conversation>`
+
+### GET `/v1/{space_id}/conversations/{conversation_id}/delta?collection=<collection>&messages_offset=<n>&artifacts_offset=<n>`
+
+- Purpose: Get incremental conversation updates after client-side offsets
+- Auth: SpaceToken/CWT `read` (public spaces are unauthenticated; private spaces require a valid token)
+- Query:
+  - `collection?: string` // use "recall" or "maintenance" to distinguish non-default conversation collections
+  - `messages_offset?: number` // returns only messages after this offset, defaults to `0`
+  - `artifacts_offset?: number` // returns only artifacts after this offset, defaults to `0`
+- Response: `RpcResponse<ConversationDelta>`
 
 ### GET `/v1/{space_id}/conversations?collection=<collection>&cursor=<cursor>&limit=<n>`
 
