@@ -203,7 +203,6 @@ impl Agent<AgentCtx> for RecallAgent {
             .await?;
         conversation._id = id;
         let notes = load_notes(&ctx).await.unwrap_or_default();
-        let max_output_tokens = (ctx.model.max_output / 2).max(10000);
         match ctx
             .completion(
                 CompletionRequest {
@@ -220,7 +219,7 @@ impl Agent<AgentCtx> for RecallAgent {
                     chat_history,
                     tools: ctx.tool_definitions(Some(&self.tool_dependencies())),
                     tool_choice_required: true,
-                    max_output_tokens: Some(max_output_tokens),
+                    max_output_tokens: Some(ctx.model.max_output.max(32000)),
                     ..Default::default()
                 },
                 vec![],

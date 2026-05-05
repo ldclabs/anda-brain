@@ -317,7 +317,6 @@ impl FormationAgent {
         let primer = self.memory.describe_primer().await.unwrap_or_default();
         let notes = load_notes(ctx).await.unwrap_or_default();
         let should_review = prompt.len() >= 10000;
-        let max_output_tokens = (ctx.model.max_output / 2).max(10000);
         let mut runner = ctx.clone().completion_iter(
             CompletionRequest {
                 instructions: format!(
@@ -333,7 +332,7 @@ impl FormationAgent {
                 chat_history,
                 tools: ctx.tool_definitions(Some(&self.tool_dependencies())),
                 tool_choice_required: true,
-                max_output_tokens: Some(max_output_tokens),
+                max_output_tokens: Some(ctx.model.max_output.max(32000)),
                 ..Default::default()
             },
             vec![],
