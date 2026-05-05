@@ -995,7 +995,7 @@ impl HippocampusHook for Hooks {
             "recall_memory" => {
                 let _ = self
                     .db
-                    .set_extension_from_with("recall_memory".to_string(), |v| {
+                    .set_extension_from_with("recall_usage".to_string(), |v| {
                         let mut usage: Usage = v.unwrap_or_default();
                         usage.accumulate(&conversation.usage);
                         Some(usage)
