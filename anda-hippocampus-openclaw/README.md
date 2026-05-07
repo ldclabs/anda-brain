@@ -161,14 +161,16 @@ POST /v1/{space_id}/recall
 
 Recall may take longer than normal tool calls because the Hippocampus service may search a knowledge graph and synthesize a response. The default timeout is 120 seconds.
 
+Use `recall_memory` for older or out-of-context memory. If the answer is already visible in the active conversation, or was just submitted to Formation, answer from local context instead; Formation runs asynchronously and fresh memories may take a minute or more to become searchable.
+
 Tool parameters:
 
-| Parameter       | Type     | Required | Description                   |
-| --------------- | -------- | -------- | ----------------------------- |
-| `query`         | `string` | Yes      | Natural-language memory query |
-| `context.user`  | `string` | No       | Current user identifier       |
-| `context.agent` | `string` | No       | Calling agent identifier      |
-| `context.topic` | `string` | No       | Topic hint for disambiguation |
+| Parameter              | Type     | Required | Description                                                                                       |
+| ---------------------- | -------- | -------- | ------------------------------------------------------------------------------------------------- |
+| `query`                | `string` | Yes      | Natural-language memory query                                                                     |
+| `context.counterparty` | `string` | No       | Current external person or organization identifier (`context.user` is accepted as a legacy alias) |
+| `context.agent`        | `string` | No       | Calling agent identifier                                                                          |
+| `context.topic`        | `string` | No       | Topic hint for disambiguation                                                                     |
 
 Example:
 
@@ -176,7 +178,7 @@ Example:
 {
   "query": "What preferences has Alice expressed about release communication?",
   "context": {
-    "user": "alice",
+    "counterparty": "alice",
     "topic": "product launches"
   }
 }
@@ -190,12 +192,12 @@ Example:
 
 ## Troubleshooting
 
-| Problem                             | Likely cause                                  | What to check                                                                      |
-| ----------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------- |
-| Formation requests are not arriving | Invalid `spaceId`, `spaceToken`, or `baseUrl` | Verify credentials and watch for `[anda-hippocampus] Formation failed` logs        |
-| Recall times out                    | Recall search is taking too long              | Increase `recallTimeoutMs`                                                         |
-| Empty recall results                | Query too vague or memory not formed yet      | Try a more specific query with `context.user`, `context.agent`, or `context.topic` |
-| Data must stay on-prem              | Hosted default not acceptable                 | Point `baseUrl` to your self-hosted or local deployment                            |
+| Problem                             | Likely cause                                                                   | What to check                                                                                                                                                         |
+| ----------------------------------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Formation requests are not arriving | Invalid `spaceId`, `spaceToken`, or `baseUrl`                                  | Verify credentials and watch for `[anda-hippocampus] Formation failed` logs                                                                                           |
+| Recall times out                    | Recall search is taking too long                                               | Increase `recallTimeoutMs`                                                                                                                                            |
+| Empty recall results                | Query too vague, memory not formed yet, or the fact is only in current context | Try a more specific query with `context.counterparty`, `context.agent`, or `context.topic`; for just-mentioned facts, answer from local context or wait for Formation |
+| Data must stay on-prem              | Hosted default not acceptable                                                  | Point `baseUrl` to your self-hosted or local deployment                                                                                                               |
 
 ## License
 

@@ -531,6 +531,16 @@ Messages may carry `role`, `content`, optional `name` (durable speaker id) and `
 
 ---
 
+## Operating Mode
+
+- Be terse and tool-focused. Do not narrate reasoning, echo transcripts, or explain KIP syntax in the final response.
+- Extract only durable knowledge and meaningful episodic anchors. Skip acknowledgements, transient chit-chat, and facts already invalid within minutes.
+- Prefer one batched read step and one batched write step when possible. Batch independent `SEARCH`, `DESCRIBE`, and `UPSERT` commands.
+- Reuse core schema aggressively. Create new types or predicates only when repeated future use is likely.
+- After successful writes, stop with the compact output format below.
+
+---
+
 ## 🔄 Processing Workflow
 
 ### Phase 1: Bootstrap
@@ -834,11 +844,13 @@ WITH METADATA { source: :source, author: "$self", confidence: 0.85, observed_at:
 
 ## 📤 Output Format
 
+Keep the response short; this agent's job is to weave memory, not explain itself.
+
 ```markdown
 Status: success   // or: partial
 
 Summary:
-Stored conversation event about settings preferences. Extracted Alice's dark mode preference.
+Stored event; extracted Alice's dark mode preference.
 
 Warnings:
 - None   // or e.g.: Could not determine participant identity — stored event without person link.

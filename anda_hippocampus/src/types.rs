@@ -2,7 +2,7 @@ use anda_core::{BoxError, Principal, Usage, model::Message};
 use anda_db::storage::StorageStats;
 use anda_engine::model::ModelConfig as EngineModelConfig;
 use ic_cose_types::cose::cwt::{ClaimsSet, get_scope};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 use std::str::FromStr;
 
 #[derive(Deserialize)]
@@ -305,10 +305,9 @@ pub struct UpdateSpaceInput {
     pub public: Option<bool>,
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, Clone)]
+#[derive(Debug, Default, Serialize, Clone, PartialEq, Eq)]
 pub struct InputContext {
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(alias = "user")]
     pub counterparty: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
@@ -316,6 +315,74 @@ pub struct InputContext {
     pub source: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub topic: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct InputContextFields {
+    #[serde(alias = "user")]
+    counterparty: Option<String>,
+    agent: Option<String>,
+    source: Option<String>,
+    topic: Option<String>,
+}
+
+impl From<InputContextFields> for InputContext {
+    fn from(fields: InputContextFields) -> Self {
+        Self {
+            counterparty: fields.counterparty,
+            agent: fields.agent,
+            source: fields.source,
+            topic: fields.topic,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum InputContextWire {
+    Fields(InputContextFields),
+    JsonString(String),
+}
+
+impl<'de> Deserialize<'de> for InputContext {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match InputContextWire::deserialize(deserializer)? {
+            InputContextWire::Fields(fields) => Ok(fields.into()),
+            InputContextWire::JsonString(value) => input_context_from_json_string(&value),
+        }
+    }
+}
+
+fn input_context_from_json_string<E>(value: &str) -> Result<InputContext, E>
+where
+    E: de::Error,
+{
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("null") {
+        return Ok(InputContext::default());
+    }
+
+    if let Ok(fields) = serde_json::from_str::<InputContextFields>(trimmed) {
+        return Ok(fields.into());
+    }
+
+    if let Ok(inner) = serde_json::from_str::<String>(trimmed) {
+        let inner = inner.trim();
+        if inner.is_empty() || inner.eq_ignore_ascii_case("null") {
+            return Ok(InputContext::default());
+        }
+
+        return serde_json::from_str::<InputContextFields>(inner)
+            .map(InputContext::from)
+            .map_err(|err| E::custom(format!("context string must contain a JSON object: {err}")));
+    }
+
+    serde_json::from_str::<InputContextFields>(trimmed)
+        .map(InputContext::from)
+        .map_err(|err| E::custom(format!("context string must contain a JSON object: {err}")))
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
@@ -473,7 +540,7 @@ pub struct GetOrInitUserInput {
 
 #[cfg(test)]
 mod tests {
-    use super::{SpaceToken, TokenScope};
+    use super::{FormationInput, InputContext, RecallInput, SpaceToken, TokenScope};
     use std::str::FromStr;
 
     #[test]
@@ -550,5 +617,40 @@ mod tests {
         assert!(value.get("u").is_none());
         assert!(value.get("ca").is_none());
         assert!(value.get("ua").is_none());
+    }
+
+    #[test]
+    fn input_context_deserializes_object_and_legacy_user_alias() {
+        let context: InputContext =
+            serde_json::from_str(r#"{"user":"alice","agent":"bot","topic":"settings"}"#).unwrap();
+
+        assert_eq!(context.counterparty.as_deref(), Some("alice"));
+        assert_eq!(context.agent.as_deref(), Some("bot"));
+        assert_eq!(context.topic.as_deref(), Some("settings"));
+    }
+
+    #[test]
+    fn recall_input_context_accepts_json_string() {
+        let input: RecallInput = serde_json::from_str(
+            r#"{"query":"preferences","context":"{\"counterparty\":\"bob\",\"source\":\"thread-1\",\"topic\":\"memory\"}"}"#,
+        )
+        .unwrap();
+        let context = input.context.unwrap();
+
+        assert_eq!(context.counterparty.as_deref(), Some("bob"));
+        assert_eq!(context.source.as_deref(), Some("thread-1"));
+        assert_eq!(context.topic.as_deref(), Some("memory"));
+    }
+
+    #[test]
+    fn formation_input_context_accepts_json_string_with_user_alias() {
+        let input: FormationInput = serde_json::from_str(
+            r#"{"messages":[],"context":"{\"user\":\"carol\",\"agent\":\"agent-1\"}"}"#,
+        )
+        .unwrap();
+        let context = input.context.unwrap();
+
+        assert_eq!(context.counterparty.as_deref(), Some("carol"));
+        assert_eq!(context.agent.as_deref(), Some("agent-1"));
     }
 }
