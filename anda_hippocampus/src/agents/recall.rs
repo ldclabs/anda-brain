@@ -5,11 +5,12 @@ use anda_core::{
 use anda_engine::{
     context::AgentCtx,
     extension::note::{NoteTool, load_notes},
+    local_date_hour,
     memory::{
         Conversation, ConversationRef, ConversationStatus, Conversations, MemoryManagement,
         MemoryReadonly,
     },
-    rfc3339_datetime, unix_ms,
+    unix_ms,
 };
 use parking_lot::RwLock;
 use serde_json::{Map, json};
@@ -18,7 +19,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
-use super::{HippocampusHook, SELF_USER_ID, SYSTEM_PROMPT_DYNAMIC_BOUNDARY};
+use super::{HippocampusHook, SELF_USER_ID};
 use crate::types::RecallInput;
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusRecall.md");
@@ -207,13 +208,12 @@ impl Agent<AgentCtx> for RecallAgent {
             .completion(
                 CompletionRequest {
                     instructions: format!(
-                        "{}\n\n{}\n\n---\n\n# `DESCRIBE PRIMER` Result:\n{}\n\n---\n\n# Your notes:\n{}\n\n# Counterparty profile:\n{}\n\n# Current datetime: {}",
+                        "{}\n\n---\n\n# `DESCRIBE PRIMER` Result:\n{}\n\n---\n\n# Your Notes:\n{}\n\n# Counterparty profile:\n{}\n\n# Current Datetime: {}",
                         SELF_INSTRUCTIONS,
-                        SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
                         primer,
                         serde_json::to_string(&notes.notes).unwrap_or_default(),
                         serde_json::to_string(&counterparty_info).unwrap_or_default(),
-                        rfc3339_datetime(now_ms).unwrap_or_else(|| format!("{now_ms} in unix ms"))
+                        local_date_hour(now_ms).unwrap_or_default()
                     ),
                     prompt,
                     chat_history,

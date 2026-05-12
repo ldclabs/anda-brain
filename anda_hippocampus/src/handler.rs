@@ -373,8 +373,8 @@ pub async fn get_or_init_user(
 
     // anda_cognitive_nexus::entity::Concept
     let concept = space
-        .memory
-        .get_or_init_caller(&input.user, input.name)
+        .recall
+        .get_or_init_counterparty(input.user, input.name)
         .await
         .map_err(AppError::bad_request)?;
 

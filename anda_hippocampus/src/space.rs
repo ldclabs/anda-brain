@@ -351,10 +351,10 @@ pub struct Space {
     engine: Engine,
     http_client: reqwest::Client,
     models: Arc<Models>,
-    recall: Arc<RecallAgent>,
     formation: Arc<FormationAgent>,
     maintenance: Arc<MaintenanceAgent>,
     pinned: bool,
+    pub recall: Arc<RecallAgent>,
     pub db: Arc<AndaDB>,
     pub memory: Arc<MemoryManagement>,
 }

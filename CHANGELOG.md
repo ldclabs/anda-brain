@@ -2,6 +2,23 @@
 
 All notable changes to the Anda Hippocampus project.
 
+## [0.5.2] — 2026-05-12
+
+### Changed
+- **User init routed through RecallAgent.** `get_or_init_user` now calls `space.recall.get_or_init_counterparty()` instead of `space.memory.get_or_init_caller()`, aligning user identity management with the recall pipeline.
+- **`GetOrInitUserInput.user` type relaxed.** `user` field changed from `Principal` to `String` for broader caller compatibility.
+- **`Space.recall` now `pub`.** RecallAgent is publicly accessible for user initialization and other external callers.
+
+### Improved
+- **Human-readable datetime in agent prompts.** Replaced `rfc3339_datetime()` with `local_date_hour()` across Formation, Maintenance, and Recall agents — `YYYY-MM-DD HH(AM/PM) ±TZ` format is more compact and readable for LLM context.
+- **Prompt section labels consistently capitalized.** ("Your Notes", "Counterparty Profile", "Current Datetime").
+
+### Removed
+- **`SYSTEM_PROMPT_DYNAMIC_BOUNDARY`** from Formation, Maintenance, and Recall agent instruction prompts — simplifies prompt structure without loss of context.
+
+### Dependencies
+- `anda_engine` 0.12.2 → 0.12.6.
+
 ## [0.5.0] — 2026-05-07
 
 ### Features

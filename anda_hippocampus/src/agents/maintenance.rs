@@ -6,8 +6,9 @@ use anda_db::schema::DocumentId;
 use anda_engine::{
     context::AgentCtx,
     extension::note::{NoteTool, load_notes},
+    local_date_hour,
     memory::{Conversation, ConversationRef, ConversationStatus, Conversations, MemoryManagement},
-    rfc3339_datetime, unix_ms,
+    unix_ms,
 };
 use parking_lot::RwLock;
 use serde_json::json;
@@ -19,7 +20,7 @@ use std::{
     },
 };
 
-use super::{HippocampusHook, SELF_USER_ID, SYSTEM_PROMPT_DYNAMIC_BOUNDARY};
+use super::{HippocampusHook, SELF_USER_ID};
 use crate::types::{MaintenanceAt, MaintenanceScope};
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusMaintenance.md");
@@ -241,12 +242,11 @@ impl MaintenanceAgent {
         let mut runner = ctx.clone().completion_iter(
             CompletionRequest {
                 instructions: format!(
-                    "{}\n\n{}\n\n---\n\n# `DESCRIBE PRIMER` Result:\n{}\n\n---\n\n# Your notes:\n{}\n\n# Current datetime: {}",
+                    "{}\n\n---\n\n# `DESCRIBE PRIMER` Result:\n{}\n\n---\n\n# Your Notes:\n{}\n\n# Current Datetime: {}",
                     SELF_INSTRUCTIONS,
-                    SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
                     primer,
                     serde_json::to_string(&notes.notes).unwrap_or_default(),
-                    rfc3339_datetime(now_ms).unwrap_or_else(|| format!("{now_ms} in unix ms"))
+                    local_date_hour(now_ms).unwrap_or_default()
                 ),
                 prompt,
                 chat_history,

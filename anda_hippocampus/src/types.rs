@@ -534,7 +534,7 @@ pub struct CreateOrUpdateSpaceInput {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct GetOrInitUserInput {
-    pub user: Principal,
+    pub user: String,
     pub name: Option<String>,
 }
 
