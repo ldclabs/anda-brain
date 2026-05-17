@@ -2,6 +2,27 @@
 
 All notable changes to the Anda Hippocampus project.
 
+## [0.5.4] — 2026-05-17
+
+### Dependencies
+- `anda_engine` 0.12.8 → 0.12.12.
+
+**Engine changelog (cumulative 0.12.9–0.12.12):**
+
+| Version | Summary |
+|---------|---------|
+| **0.12.9** | `steering_message` / `follow_up_message` upgraded from `Vec<String>` to `Vec<ContentPart>` — multimodal passthrough for steer/follow-up content. |
+| **0.12.10** | `implicit_context` — injectable one-shot context that doesn't persist in message history. Fixed prompt ordering (system messages now consistently first) across all 4 providers (Anthropic, Gemini, OpenAI, OpenAIv2). |
+| **0.12.11** | Prevent `implicit_context` injection on tool-call turns (only injects when assistant actually responds). **DeepSeek compatibility**: skip `tool_choice` parameter for DeepSeek models (API doesn't support it). |
+| **0.12.12** | **Tool output splitting**: multi-tool-output `Message`s now split into separate tool-role `MessageInput`s, each with its own `tool_call_id` (fixes protocol violation). **Message round-trip rewrite**: image/audio/file/video/refusal content parts preserved during `MessageOutput → Message` conversion (were silently lost). `msg.name` now survives round-trip. |
+
+## [0.5.3] — 2026-05-16
+
+### Dependencies
+- `anda_engine` 0.12.6 → 0.12.8.
+
+**Engine changelog (0.12.8):** Major release — Anthropic/Gemini types, OpenAI Responses API support, `TryFrom` MIME detection, SubAgent enhancements. Paired with `anda_core` v0.12.1.
+
 ## [0.5.2] — 2026-05-12
 
 ### Changed
