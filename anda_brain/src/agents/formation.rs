@@ -332,7 +332,6 @@ impl FormationAgent {
                 chat_history,
                 tools: ctx.tool_definitions(Some(&self.tool_dependencies())),
                 tool_choice_required: true,
-                max_output_tokens: Some(ctx.model.max_output.max(32000)),
                 ..Default::default()
             },
             vec![],

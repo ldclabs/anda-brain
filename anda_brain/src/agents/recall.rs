@@ -31,36 +31,63 @@ pub static FUNCTION_DEFINITION: LazyLock<FunctionDefinition> = LazyLock::new(|| 
         "parameters": {
             "type": "object",
             "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "A natural language question about older or out-of-context memory. Be specific and include the subject, timeframe, and topic when known. Examples: 'What do we know about the current user's communication preferences?', 'What happened in our last discussion about Project Aurora?', 'Who are the members of the engineering team?'"
-                },
-                "context": {
-                    "type": "object",
-                    "description": "Optional current conversational context used only to disambiguate the query within $self's memory. Pass an object, not a JSON string. It does not change the memory owner.",
-                    "properties": {
-                        "counterparty": {
-                            "type": "string",
-                            "description": "Preferred. Durable identifier of the current external person or organization interacting with the business agent. Useful for resolving implicit references such as 'the current user', 'they', or omitted subjects."
-                        },
-                        "agent": {
-                            "type": "string",
-                            "description": "The identifier of the calling business agent, if applicable. Useful for provenance or caller-specific queries, but it does not change whose memory is searched."
-                        },
-                        "source": {
-                            "type": "string",
-                            "description": "Identifier of the current source, thread, channel, or app context. Useful when the query refers to a previous discussion in the same place."
-                        },
-                        "topic": {
-                            "type": "string",
-                            "description": "The topic of the current conversation, to help disambiguate the query."
-                        }
-                    }
-                }
+            "query": {
+                "type": "string",
+                "description": "A natural language question about older or out-of-context memory. Be specific and include the subject, timeframe, and topic when known. Examples: 'What do we know about the current user's communication preferences?', 'What happened in our last discussion about Project Aurora?', 'Who are the members of the engineering team?'"
             },
-            "required": ["query"]
-        }
-    })).unwrap()
+            "context": {
+                "type": [
+                    "object",
+                    "null"
+                ],
+                "description": "Optional current conversational context used only to disambiguate the query within $self's memory. Pass an object, not a JSON string. It does not change the memory owner.",
+                "properties": {
+                "counterparty": {
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "description": "Preferred. Durable identifier of the current external person or organization interacting with the business agent. Useful for resolving implicit references such as 'the current user', 'they', or omitted subjects."
+                },
+                "agent": {
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "description": "The identifier of the calling business agent, if applicable. Useful for provenance or caller-specific queries, but it does not change whose memory is searched."
+                },
+                "source": {
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "description": "Identifier of the current source, thread, channel, or app context. Useful when the query refers to a previous discussion in the same place."
+                },
+                "topic": {
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "description": "The topic of the current conversation, to help disambiguate the query."
+                }
+                },
+                "required": [
+                    "counterparty",
+                    "agent",
+                    "source",
+                    "topic"
+                ],
+                "additionalProperties": false
+            }
+            },
+            "required": [
+                "query",
+                "context"
+            ],
+            "additionalProperties": false
+        },
+        "strict": true
+        })).unwrap()
 });
 
 #[derive(Clone)]
@@ -219,7 +246,6 @@ impl Agent<AgentCtx> for RecallAgent {
                     chat_history,
                     tools: ctx.tool_definitions(Some(&self.tool_dependencies())),
                     tool_choice_required: true,
-                    max_output_tokens: Some(ctx.model.max_output.max(32000)),
                     ..Default::default()
                 },
                 vec![],

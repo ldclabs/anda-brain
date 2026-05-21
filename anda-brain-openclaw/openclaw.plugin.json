@@ -44,14 +44,12 @@
       "formationTimeoutMs": {
         "type": "number",
         "description": "Timeout in milliseconds for formation requests.",
-        "default": 30000,
-        "minimum": 1
+        "default": 30000
       },
       "recallTimeoutMs": {
         "type": "number",
         "description": "Timeout in milliseconds for recall requests.",
-        "default": 120000,
-        "minimum": 1
+        "default": 120000
       }
     },
     "additionalProperties": false
