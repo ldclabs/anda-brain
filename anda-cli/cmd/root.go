@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/ldclabs/anda-hippocampus/anda-cli/api"
+	"github.com/ldclabs/anda-brain/anda-cli/api"
 	"github.com/spf13/cobra"
 )
 
@@ -15,7 +15,7 @@ var (
 	token   string
 )
 
-const Version = "0.5.0"
+const Version = "0.6.0"
 
 func newClient() *api.Client {
 	return api.NewClient(baseURL, spaceID, token)
@@ -37,8 +37,8 @@ func exitError(err error) {
 
 var rootCmd = &cobra.Command{
 	Use:     "anda-cli",
-	Short:   "CLI tool for Anda Hippocampus API",
-	Long:    "A command-line interface for interacting with the Anda Hippocampus memory service.",
+	Short:   "CLI tool for Anda Brain API",
+	Long:    "A command-line interface for interacting with the Anda Brain memory service.",
 	Version: Version,
 }
 

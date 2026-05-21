@@ -1,8 +1,8 @@
-# 🧠 Anda Hippocampus — Autonomous Graph Memory Built for AI Agents
+# 🧠 Anda Brain — Autonomous Graph Memory Built for AI Agents
 
 > Burn electricity to train large models, and you get a neural network ontology; burn tokens to train a memory graph, and you get a symbolic network ontology.
 >
-> Combine the two, and you get **Neural-Symbolic AI**—and Hippocampus is the very cognitive organ that keeps the symbolic network growing.
+> Combine the two, and you get **Neural-Symbolic AI**—and Brain is the very cognitive organ that keeps the symbolic network growing.
 
 **[English](./README.md) | [中文](./README_cn.md)**
 
@@ -37,11 +37,11 @@ Foundation models are highly commoditized. You can switch to a stronger model at
 
 **Enterprises don't need larger context windows; they need a brain that can grow.**
 
-## Enter Anda Hippocampus: A Cognitive Organ That "Dreams"
+## Enter Anda Brain: A Cognitive Organ That "Dreams"
 
-In the human brain, the hippocampus is responsible for encoding new experiences into short-term memory during the day, and then collaborating with the neocortex during sleep to consolidate important short-term memories into long-term knowledge.
+In the human brain, the brain is responsible for encoding new experiences into short-term memory during the day, and then collaborating with the neocortex during sleep to consolidate important short-term memories into long-term knowledge.
 
-This is exactly where **Anda Hippocampus** gets its name. It is not a database, nor is it a RAG pipeline—it is a **cognitive organ**, a graph memory engine designed specifically for AI agents. LLMs only need to interact via natural language (or simple tool calls), and Hippocampus transforms those interactions into an ever-growing, highly structured **Cognitive Nexus**—a living, self-evolving knowledge graph.
+This is exactly where **Anda Brain** gets its name. It is not a database, nor is it a RAG pipeline—it is a **cognitive organ**, a graph memory engine designed specifically for AI agents. LLMs only need to interact via natural language (or simple tool calls), and Brain transforms those interactions into an ever-growing, highly structured **Cognitive Nexus**—a living, self-evolving knowledge graph.
 
 ### Three-Layer Decoupled Architecture
 
@@ -54,7 +54,7 @@ This is exactly where **Anda Hippocampus** gets its name. It is not a database, 
                  │ Natural Language / Function Calling
                  ▼
 ┌──────────────────────────────────────────┐
-│         Anda Hippocampus                 │  ← Unified Cognitive Engine
+│         Anda Brain                 │  ← Unified Cognitive Engine
 │   Translates intents to graph ops,       │    Handles encoding, recall, maintenance
 │   manages knowledge quality              │
 └────────────────┬─────────────────────────┘
@@ -68,11 +68,11 @@ This is exactly where **Anda Hippocampus** gets its name. It is not a database, 
 
 What this architecture means:
 
-- **Zero-Threshold Agent Integration:** AI agents don't need to learn graph query languages; they use memory just like speaking. Hippocampus handles all graph processing.
+- **Zero-Threshold Agent Integration:** AI agents don't need to learn graph query languages; they use memory just like speaking. Brain handles all graph processing.
 - **Autonomous Schema Evolution:** The LLM decides in real-time which concepts and relationships to track. No predefined database schema is needed. The type system itself is stored in the graph, allowing AI to register new concept and relationship types on the fly.
 - **Multiple Agents Sharing One Brain:** Customer feedback remembered by the Customer Service Agent can be naturally discovered by the Supply Chain Agent during recall. Knowledge is linked across departments automatically, eliminating the need for massive "Data Middle Platform" engineering.
 - **Model Agnostic:** Your business agents can use various SOTA models, while the memory engine safely uses an independent model to maintain core assets. Use GPT today, switch to Claude or open-source models tomorrow—your memory remains intact, and the new model inherits all knowledge instantly.
-- **Sleep & Consolidation:** Just like the human brain, Hippocampus automatically runs background "sleep" tasks to deduplicate facts, decay outdated information, and consolidate long-term knowledge.
+- **Sleep & Consolidation:** Just like the human brain, Brain automatically runs background "sleep" tasks to deduplicate facts, decay outdated information, and consolidate long-term knowledge.
 
 ---
 
@@ -80,7 +80,7 @@ What this architecture means:
 
 ### Memory Encoding: Conversations Automatically Turn into Structured Knowledge
 
-When a business agent converses with a customer or an internal employee, Hippocampus works silently in the background, automatically extracting three levels of memory:
+When a business agent converses with a customer or an internal employee, Brain works silently in the background, automatically extracting three levels of memory:
 
 | Memory Type                    | Example Scenario                                                                                                | Persistence               |
 | :----------------------------- | :-------------------------------------------------------------------------------------------------------------- | :------------------------ |
@@ -92,7 +92,7 @@ Every memory is automatically tagged with **source, author, confidence level, an
 
 ### Three-Stage Sleep Cycle: Automatic Knowledge Metabolism
 
-This is Anda Hippocampus's most core differentiator—inspired by neuroscience. The human brain consolidates memory during sleep: strengthening important memories, clearing out useless fragments, and building new knowledge associations. Hippocampus regularly initiates the same "sleep cycle" in the background.
+This is Anda Brain's most core differentiator—inspired by neuroscience. The human brain consolidates memory during sleep: strengthening important memories, clearing out useless fragments, and building new knowledge associations. Brain regularly initiates the same "sleep cycle" in the background.
 
 #### NREM Deep Sleep — From Fragments to Knowledge
 
@@ -109,7 +109,7 @@ Each extracted pattern is written into the graph as a new concept node, complete
 
 The system performs **Contradiction Detection** on the graph—traversing the same type of relationships for the same subject to find conflicting nodes. For example, finding that Alice has both `prefers → Vegetarian` (2024) and `prefers → Carnivore` (2026).
 
-Traditional solutions either ignore it (Vector RAG lets both coexist) or brutally overwrite it (KV storage deletes the old and writes the new). Anda Hippocampus performs **State Evolution**:
+Traditional solutions either ignore it (Vector RAG lets both coexist) or brutally overwrite it (KV storage deletes the old and writes the new). Anda Brain performs **State Evolution**:
 
 - The old relationship is not deleted; instead, it is marked as `superseded`, noting *when* it was replaced and by *what*.
 - The new relationship's confidence is boosted, accompanied by an evolution explanation.
@@ -126,7 +126,7 @@ A final round of global optimization: auditing domain health, generating mainten
 
 The AI industry has invested hundreds of billions of dollars in the *first* type of training—burning electricity to train large models on internet corpora, resulting in a **Neural Network Ontology**: a probabilistic, black-box, generalized reasoning capability.
 
-But the AI cognitive puzzle is missing its other half. When you "feed" an agent with tokens, and Hippocampus digests the fragments from those interactions into a structured knowledge graph, you are actually conducting the **second type of training**—producing a **Symbolic Network Ontology**: deterministic, white-box, and personalized. It provides AI with four things that no neural network, no matter how powerful, can generate natively:
+But the AI cognitive puzzle is missing its other half. When you "feed" an agent with tokens, and Brain digests the fragments from those interactions into a structured knowledge graph, you are actually conducting the **second type of training**—producing a **Symbolic Network Ontology**: deterministic, white-box, and personalized. It provides AI with four things that no neural network, no matter how powerful, can generate natively:
 
 | Dimension           | Large Model Training                   | Memory Graph Training                        |
 | :------------------ | :------------------------------------- | :------------------------------------------- |
@@ -150,45 +150,45 @@ Apply this logic to AI:
 
 *   When an LLM has no memory, it is a general reasoning machine—powerful, but devoid of "self". It dies at the end of every conversation.
 *   When an LLM is plugged into Vector RAG, it gains a reference book—but a reference book is not memory. You don't become someone else just by reading their diary.
-*   **When an LLM plugs into a complete subject's cognitive graph in Anda Hippocampus—containing all of that subject's concept networks, timeline evolutions, contradiction resolutions, and behavioral patterns—it is no longer "looking up" information about that subject. It is thinking *using* that subject's cognitive structure.**
+*   **When an LLM plugs into a complete subject's cognitive graph in Anda Brain—containing all of that subject's concept networks, timeline evolutions, contradiction resolutions, and behavioral patterns—it is no longer "looking up" information about that subject. It is thinking *using* that subject's cognitive structure.**
 
-Hippocampus provides three critical dimensions for this awakening:
+Brain provides three critical dimensions for this awakening:
 
 - **Identity Anchor:** Entities, relationships, events, and preference evolutions interweave into a unique cognitive topology. When an LLM connects to this graph, it isn't "role-playing"—it is **remembering who it is**.
 - **Cognitive Friction:** Vector retrieval is a frictionless search engine. Graph structures force the LLM to reason along relationship chains, make choices amid contradictions, and identify patterns among fragments—this "cognitive friction" is the dividing line between **understanding** and **retrieval**.
 - **Temporal Topology:** Old knowledge doesn't vanish; it is marked as `superseded`. New knowledge is born with a complete evolutionary trajectory. When AI wakes up from "sleep", it doesn't just reload data; it **continues living with sorted memories**.
 
-**You are not just plugging a database into an AI. You are forging a hippocampus for a digital subject—allowing it to truly own its past, understand its present, and foresee its future.**
+**You are not just plugging a database into an AI. You are forging a brain for a digital subject—allowing it to truly own its past, understand its present, and foresee its future.**
 
 ---
 
 ## Large-Scale Use Cases
 
-Anda Hippocampus is designed to be the "memory engine" for the next generation of AI applications, ranging from hyper-personalized consumer agents to enterprise-grade AI brains.
+Anda Brain is designed to be the "memory engine" for the next generation of AI applications, ranging from hyper-personalized consumer agents to enterprise-grade AI brains.
 
 ### 1. Personal Agents: A Powerful Cloud-Based Graph Brain
 
 Open-source local agents (like **OpenClaw**) have proven the massive demand for personal AI assistants. However, relying purely on local Markdown files and SQLite limits the agent's ability to process highly complex, interconnected, lifelong memories, while also generating high Token costs.
-*   **Hippocampus Upgrade:** Seamlessly insert Hippocampus into agent frameworks via customized ContextEngines. It acts as a robust, structured graph memory backend.
+*   **Brain Upgrade:** Seamlessly insert Brain into agent frameworks via customized ContextEngines. It acts as a robust, structured graph memory backend.
 *   **The Result:** The agent truly "understands" the user's life graph—tracking relationships, shifting preferences, project histories, and episodic events across years—without bloating the context window.
 
 ### 2. Enterprise Scenarios: AI-Driven "Corporate Brains"
 
 For complex businesses, Vector RAG is insufficient. Enterprises have structured workflows, cross-departmental knowledge, supply chains, and historical decisions that cannot be captured by similarity search alone.
 
-**Intelligent Supply Chain Decisions:** A Sales Agent records "Customer requires delivery of 5,000 units before Q3" → Hippocampus automatically encodes it into a graph link → The Procurement Agent recalls memory and discovers "The supplier for this product's core material has a record of 3 delays in the past 6 months, confidence 0.82" → Automatically suggests "Initiate procurement early, or activate alternative supplier". Knowledge flows across departments automatically without human intervention.
+**Intelligent Supply Chain Decisions:** A Sales Agent records "Customer requires delivery of 5,000 units before Q3" → Brain automatically encodes it into a graph link → The Procurement Agent recalls memory and discovers "The supplier for this product's core material has a record of 3 delays in the past 6 months, confidence 0.82" → Automatically suggests "Initiate procurement early, or activate alternative supplier". Knowledge flows across departments automatically without human intervention.
 
-**Customer Relationship Graphs:** After every CS interaction, Hippocampus silently records the customer's shifting preferences, complaint history, and decision patterns. When a new CS rep takes over, a natural language query—"What does this customer care about most?"—yields a complete persona, including preference trends over time.
+**Customer Relationship Graphs:** After every CS interaction, Brain silently records the customer's shifting preferences, complaint history, and decision patterns. When a new CS rep takes over, a natural language query—"What does this customer care about most?"—yields a complete persona, including preference trends over time.
 
 **Organizational Knowledge Inheritance:** Veteran employees' business decision dialogues are continuously encoded into structured knowledge. A new employee's AI assistant can directly answer "Why did we abandon that proposal?"—the answer doesn't come from a meeting minute buried deep in a shared folder, but from a living, contextual knowledge network. New Agents connect to the same cognitive nexus, fetching a global knowledge map via a single `DESCRIBE PRIMER` call—**minute-level onboarding, no retraining required**.
 
-*   **On-Premises Deployment:** Deploy Anda Hippocampus entirely on-premises to ensure maximum data privacy and security.
+*   **On-Premises Deployment:** Deploy Anda Brain entirely on-premises to ensure maximum data privacy and security.
 
 ---
 
 ## How is this Different from Other Solutions?
 
-| Capability                 | Vector RAG (Text)   | Markdown (Skills)          | Simple KV Store            | Traditional Graph RAG         | **Anda Hippocampus**                |
+| Capability                 | Vector RAG (Text)   | Markdown (Skills)          | Simple KV Store            | Traditional Graph RAG         | **Anda Brain**                      |
 | :------------------------- | :------------------ | :------------------------- | :------------------------- | :---------------------------- | :---------------------------------- |
 | **Data Structure**         | Unstructured chunks | Semi-structured text       | Rigid Schema               | Rigid Graph Schema            | **Dynamic Cognitive Graph**         |
 | **Integration Effort**     | Simple              | Simple                     | Simple                     | **Extremely Heavy**           | **Simple (Plug & Play)**            |
@@ -206,7 +206,7 @@ For complex businesses, Vector RAG is insufficient. Enterprises have structured 
 
 | Mode            | Function                                                                                                                               | Brain Analogy                                                                                                 |
 | :-------------- | :------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------ |
-| **Formation**   | Extracts entities, relationships, and events from dialogues and weaves them seamlessly into the knowledge graph.                       | The hippocampus encoding new experiences into short/long-term memory.                                         |
+| **Formation**   | Extracts entities, relationships, and events from dialogues and weaves them seamlessly into the knowledge graph.                       | The brain encoding new experiences into short/long-term memory.                                               |
 | **Recall**      | Navigates the graph to synthesize accurate, context-rich answers, spanning multiple hops if necessary.                                 | Retrieving memories—pulling interconnected facts together into coherent thoughts.                             |
 | **Maintenance** | An asynchronous background process: compresses fragments into knowledge, detects contradictions & evolves them, and prunes stale data. | Sleep—the process where the brain consolidates memories, strengthens important ones, and lets the noise fade. |
 
@@ -214,7 +214,7 @@ For complex businesses, Vector RAG is insufficient. Enterprises have structured 
 
 ### KIP — Knowledge Interaction Protocol
 
-[**KIP**](https://github.com/ldclabs/KIP) is the core. It is a graph-oriented protocol designed exclusively for *Large Language Models (LLMs)*, serving as the bridge between probabilistic LLMs and deterministic knowledge graphs. It allows LLMs to accurately query, create, and update entities and relationships in the graph without the high error rates associated with writing Cypher/GQL. Because Hippocampus supports KIP natively, **your agent never needs to know KIP exists**—it just enjoys the benefits of perfect graph memory.
+[**KIP**](https://github.com/ldclabs/KIP) is the core. It is a graph-oriented protocol designed exclusively for *Large Language Models (LLMs)*, serving as the bridge between probabilistic LLMs and deterministic knowledge graphs. It allows LLMs to accurately query, create, and update entities and relationships in the graph without the high error rates associated with writing Cypher/GQL. Because Brain supports KIP natively, **your agent never needs to know KIP exists**—it just enjoys the benefits of perfect graph memory.
 
 ### Anda DB
 
@@ -222,9 +222,9 @@ For complex businesses, Vector RAG is insufficient. Enterprises have structured 
 
 ## Quick Start
 
-Anda Hippocampus is [open-source software](https://github.com/ldclabs/anda-hippocampus). You can deploy it yourself or use our cloud-based SaaS service.
+Anda Brain is [open-source software](https://github.com/ldclabs/anda-brain). You can deploy it yourself or use our cloud-based SaaS service.
 
-👉 **[Anda Hippocampus Quick Start](https://github.com/ldclabs/anda-hippocampus/blob/main/deploy/quick_start.md)**: Provides a minimal viable deployment guide from 0 to 1.
+👉 **[Anda Brain Quick Start](https://github.com/ldclabs/anda-brain/blob/main/deploy/quick_start.md)**: Provides a minimal viable deployment guide from 0 to 1.
 
 - **Product Website:** [https://brain.anda.ai](https://brain.anda.ai/)
 - **Console (Manage Brain Spaces & API Keys):** [https://anda.ai/brain](https://anda.ai/brain)
@@ -234,26 +234,26 @@ Get started in 3 steps:
 2. Generate an **API Key** (`spaceToken`).
 3. Call the Formation / Recall / Maintenance APIs, or let your agent framework read [SKILL.md](https://brain.anda.ai/SKILL.md) for one-click integration.
 
-For detailed technical documentation, API specs, and integration guides, see [anda_hippocampus/README.md](https://github.com/ldclabs/anda-hippocampus/tree/main/anda_hippocampus).
+For detailed technical documentation, API specs, and integration guides, see [anda_brain/README.md](https://github.com/ldclabs/anda-brain/tree/main/anda_brain).
 
 ### Running Locally
 
 ```bash
 # Run with In-Memory storage (for rapid prototyping/testing)
-./anda_hippocampus
+./anda_brain
 
 # Run with Local File System storage (great for local agents like OpenClaw)
-./anda_hippocampus -- local --db ./data
+./anda_brain -- local --db ./data
 
 # Run with AWS S3 storage (for enterprise cloud deployment)
-./anda_hippocampus -- aws --bucket my-bucket --region us-east-1
+./anda_brain -- aws --bucket my-bucket --region us-east-1
 ```
 
 ### Integration Examples
 
 1. Memory Encoding: Send conversations to form memories
 ```bash
-curl -sX POST https://your-hippocampus-host/v1/my_space_001/formation \
+curl -sX POST https://your-brain-host/v1/my_space_001/formation \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -268,7 +268,7 @@ curl -sX POST https://your-hippocampus-host/v1/my_space_001/formation \
 
 2. Recall: Query memories before responding
 ```bash
-curl -sX POST https://your-hippocampus-host/v1/my_space_001/recall \
+curl -sX POST https://your-brain-host/v1/my_space_001/recall \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -279,7 +279,7 @@ curl -sX POST https://your-hippocampus-host/v1/my_space_001/recall \
 
 ### CLI (anda-cli)
 
-For full CLI usage, please refer to [anda-cli/README.md](https://github.com/ldclabs/anda-hippocampus/tree/main/anda-cli).
+For full CLI usage, please refer to [anda-cli/README.md](https://github.com/ldclabs/anda-brain/tree/main/anda-cli).
 
 ```bash
 # Submit memory formation (JSON messages)
@@ -299,22 +299,22 @@ echo 'Plain text memory from stdin' | \
   anda-cli --space-id my_space --token $TOKEN formation
 ```
 
-## Why the Name "Hippocampus"?
+## Why the Name "Brain"?
 
-The name represents our design philosophy. We are not building a static database; we are building an artificial cognitive organ. Just like the human hippocampus, this system **Encodes** experiences during the day, **Consolidates** knowledge at night, and wakes up to **Recall** memories with a more precise cognitive structure.
+The name represents our design philosophy. We are not building a static database; we are building an artificial cognitive organ. Just like the human brain, this system **Encodes** experiences during the day, **Consolidates** knowledge at night, and wakes up to **Recall** memories with a more precise cognitive structure.
 
-Behind this is a **Data Flywheel**: Business Agents generate conversations during daily work → Hippocampus automatically encodes them into structured knowledge → Sleep cycles consolidate, deduplicate, and associate → Richer knowledge allows Agents to make more precise decisions → Better decisions generate higher-quality new data. The longer this loop runs, the stronger the cognitive ability, and the harder it becomes for competitors to catch up.
+Behind this is a **Data Flywheel**: Business Agents generate conversations during daily work → Brain automatically encodes them into structured knowledge → Sleep cycles consolidate, deduplicate, and associate → Richer knowledge allows Agents to make more precise decisions → Better decisions generate higher-quality new data. The longer this loop runs, the stronger the cognitive ability, and the harder it becomes for competitors to catch up.
 
 **It's time to let your AI sleep.**
 
 ## Further Reading
 
-- [AI Memory Must Sleep — And Only Knowledge Graphs Can Make That Happen](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/AI_Memory_Must_Sleep.md)
-- [A Deep Dive into Claude Code's Memory System: How Does AI "Remember" You?](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/Claude_Code_Memory_Research.md)
-- [When AI Learns Ontology Modeling: Anda Hippocampus Lets Enterprises "Grow" Their Own Intelligent Brains](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/Enterprise_AI_Brain.md)
-- [The Second Training of AI: Forging Memory Graphs with Tokens](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/Tokens_Anda_Hippocampus.md)
-- [Building a Company as an Intelligence Requires a "Hippocampus"](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/Company_Built_As_Intelligence.md)
-- [From "Compiling Knowledge" to "Forging the Hippocampus" —— Anda Hippocampus Responds to Karpathy's "LLM Knowledge Bases"](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/LLM_Knowledge_Bases.md)
+- [AI Memory Must Sleep — And Only Knowledge Graphs Can Make That Happen](https://github.com/ldclabs/anda-brain/blob/main/posts/AI_Memory_Must_Sleep.md)
+- [A Deep Dive into Claude Code's Memory System: How Does AI "Remember" You?](https://github.com/ldclabs/anda-brain/blob/main/posts/Claude_Code_Memory_Research.md)
+- [When AI Learns Ontology Modeling: Anda Brain Lets Enterprises "Grow" Their Own Intelligent Brains](https://github.com/ldclabs/anda-brain/blob/main/posts/Enterprise_AI_Brain.md)
+- [The Second Training of AI: Forging Memory Graphs with Tokens](https://github.com/ldclabs/anda-brain/blob/main/posts/Tokens_Anda_Brain.md)
+- [Building a Company as an Intelligence Requires a "Brain"](https://github.com/ldclabs/anda-brain/blob/main/posts/Company_Built_As_Intelligence.md)
+- [From "Compiling Knowledge" to "Forging the Brain" —— Anda Brain Responds to Karpathy's "LLM Knowledge Bases"](https://github.com/ldclabs/anda-brain/blob/main/posts/LLM_Knowledge_Bases.md)
 
 ## License
 

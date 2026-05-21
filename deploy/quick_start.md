@@ -1,4 +1,4 @@
-# Anda Hippocampus Quick Start
+# Anda Brain Quick Start
 
 This guide provides a minimal flow from zero to a usable state, including:
 
@@ -34,19 +34,19 @@ Choose one: Download from Releases, or build from source.
 
 Repository Releases:
 
-- https://github.com/ldclabs/anda-hippocampus/releases
+- https://github.com/ldclabs/anda-brain/releases
 
 After downloading the `anda-cli` executable that matches your system:
 
 ```bash
-wget -O anda-cli https://github.com/ldclabs/anda-hippocampus/releases/download/v0.3.2/anda-cli-macos-arm64
+wget -O anda-cli https://github.com/ldclabs/anda-brain/releases/download/v0.6.0/anda-cli-macos-arm64
 chmod +x anda-cli
 ```
 
 ### Option B: Build `anda-cli` locally
 
 ```bash
-cd path/to/anda-hippocampus/anda-cli
+cd path/to/anda-brain/anda-cli
 go build -o anda-cli .
 chmod +x anda-cli
 mv anda-cli ../anda-brain/
@@ -70,7 +70,7 @@ cat keys.json
 
 ### 3.2 Configure General Environment Variables
 
-Create a `.env` file required to run Anda Hippocampus. Example content:
+Create a `.env` file required to run Anda Brain. Example content:
 ```bash
 LOG_LEVEL='info'
 LISTEN_ADDR='0.0.0.0:8042'
@@ -86,24 +86,24 @@ MODEL_API_BASE='https://api.minimaxi.com/anthropic/v1'
 MODEL_API_KEY='YOUR_MODEL_API_KEY'
 ```
 
-## 4. Start Anda Hippocampus (Local File Storage)
+## 4. Start Anda Brain (Local File Storage)
 
 Choose one: Run via local build, or run via Docker (supports pulling remote images).
 
 ### Option A: Run via local build
 
 ```bash
-cd path/to/anda-hippocampus
-cargo build -p anda_hippocampus --release
-mv target/release/anda_hippocampus ../anda-brain/
+cd path/to/anda-brain
+cargo build -p anda_brain --release
+mv target/release/anda_brain ../anda-brain/
 cd ../anda-brain/
 
-./anda_hippocampus local --db ./db
+./anda_brain local --db ./db
 ```
 
-If you prefer not to compile locally, you can also download the corresponding `anda_hippocampus` executable for your system from the Releases page:
+If you prefer not to compile locally, you can also download the corresponding `anda_brain` executable for your system from the Releases page:
 
-- https://github.com/ldclabs/anda-hippocampus/releases
+- https://github.com/ldclabs/anda-brain/releases
 
 After downloading, you can start it similarly using `local --db ./db`.
 
@@ -116,19 +116,19 @@ On Apple Silicon (M1/M2/M3) macOS, it is recommended to explicitly specify the p
 ```bash
 export DOCKER_PLATFORM=linux/amd64
 
-docker pull --platform $DOCKER_PLATFORM ghcr.io/ldclabs/anda_hippocampus_amd64:latest
+docker pull --platform $DOCKER_PLATFORM ghcr.io/ldclabs/anda_brain_amd64:latest
 
 docker run --rm --platform $DOCKER_PLATFORM -p 8042:8042 \
 	-v "$(pwd)/db:/app/db" \
   -v "$(pwd)/.env:/app/.env" \
-	ghcr.io/ldclabs/anda_hippocampus_amd64:latest local --db /app/db
+	ghcr.io/ldclabs/anda_brain_amd64:latest local --db /app/db
 ```
 
 #### B2. Build the Docker image locally
 
 ```bash
 # Building an arm64 local image is recommended for Apple Silicon
-docker buildx build --platform linux/arm64 -f anda_hippocampus/Dockerfile -t anda_hippocampus:local --load .
+docker buildx build --platform linux/arm64 -f anda_brain/Dockerfile -t anda_brain:local --load .
 ```
 
 ### 4.2 Verify service availability

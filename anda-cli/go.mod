@@ -1,4 +1,4 @@
-module github.com/ldclabs/anda-hippocampus/anda-cli
+module github.com/ldclabs/anda-brain/anda-cli
 
 go 1.26.1
 

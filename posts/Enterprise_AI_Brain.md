@@ -1,4 +1,4 @@
-# When AI Learns Ontology Modeling: Anda Hippocampus Lets Enterprises "Grow" Their Own Intelligent Brains
+# When AI Learns Ontology Modeling: Anda Brain Lets Enterprises "Grow" Their Own Intelligent Brains
 
 ## The Real Bottleneck in Enterprise AI is Not the Model, but Memory
 
@@ -26,15 +26,15 @@ Historically, ontology modeling was the exclusive domain of a few industry giant
 
 **What if the model could do ontology modeling itself?**
 
-This is exactly what Anda Hippocampus does.
+This is exactly what Anda Brain does.
 
-## Anda Hippocampus: An Autonomous Cognitive Brain for AI Agents
+## Anda Brain: An Autonomous Cognitive Brain for AI Agents
 
-[**Anda Hippocampus**](https://github.com/ldclabs/anda-hippocampus) is an open-source AI memory service. Drawing inspiration from the working principles of the hippocampus in cognitive neuroscience—the core organ in the human brain responsible for encoding short-term experiences into long-term memories—it builds an **autonomously growing, self-evolving knowledge graph** for AI agents.
+[**Anda Brain**](https://github.com/ldclabs/anda-brain) is an open-source AI memory service. Drawing inspiration from the working principles of the brain in cognitive neuroscience—the core organ in the human brain responsible for encoding short-term experiences into long-term memories—it builds an **autonomously growing, self-evolving knowledge graph** for AI agents.
 
 Its core philosophy is remarkably simple:
 
-> Do not force AI to learn graph database query languages, and do not require enterprises to pre-define rigid database schemas. Let AI interact in natural language, while Hippocampus automatically constructs a structured enterprise knowledge network in the background.
+> Do not force AI to learn graph database query languages, and do not require enterprises to pre-define rigid database schemas. Let AI interact in natural language, while Brain automatically constructs a structured enterprise knowledge network in the background.
 
 ### Architecture: A Three-Layer Decoupled Design for Elegant Implementation
 
@@ -47,7 +47,7 @@ Its core philosophy is remarkably simple:
                    │ Natural Language / Function Calling
                    ▼
 ┌──────────────────────────────────────────────┐
-│          Anda Hippocampus                    │  ← Unified Cognitive Engine
+│            Anda Brain                        │  ← Unified Cognitive Engine
 │ Automatically translates intents into graph  │    Handles memory encoding,
 │ operations, manages knowledge quality        │    recall, and maintenance
 └──────────────────┬───────────────────────────┘
@@ -74,13 +74,13 @@ This decoupling means your business Agents can utilize multiple SOTA models, whi
 
 Traditional graph databases require a strict predefined Schema: you must figure out what entity types and relationship types exist before filling in data. This is nearly impossible in an enterprise scenario, where business changes daily and new concepts and relationships constantly emerge.
 
-Anda Hippocampus utilizes a **Schema Bootstrapping** design via KIP (Knowledge Interaction Protocol). The type system itself is stored in the graph. During operation, AI can autonomously register new concept types and relationship types.
+Anda Brain utilizes a **Schema Bootstrapping** design via KIP (Knowledge Interaction Protocol). The type system itself is stored in the graph. During operation, AI can autonomously register new concept types and relationship types.
 
 **Real-world impact:** If your enterprise doesn't need the concept of "Carbon Emission Quotas" today, but a new policy is announced tomorrow, the AI will automatically create this type in the graph, define related relationship predicates, and categorize the new knowledge into the correct business domain during the first relevant conversation. No downtime, no development, no database schema approvals required.
 
 ### II. Memory Encoding: Conversations Automatically Turn into Enterprise Knowledge
 
-When a business Agent converses with a customer or an internal employee, Hippocampus works silently in the background, automatically extracting memories at three levels:
+When a business Agent converses with a customer or an internal employee, Brain works silently in the background, automatically extracting memories at three levels:
 
 | Memory Type                    | Enterprise Scenario Example                                                                                        | Persistence               |
 | :----------------------------- | :----------------------------------------------------------------------------------------------------------------- | :------------------------ |
@@ -92,9 +92,9 @@ Every memory is automatically bound with **source, author, confidence score, and
 
 ### III. Memory Maintenance (Sleep Mode): Automatic Knowledge Metabolism
 
-This is the most revolutionary design of Anda Hippocampus. Inspired by neuroscience: the human brain consolidates memories during sleep—strengthening important memories, clearing useless fragments, and building new knowledge connections.
+This is the most revolutionary design of Anda Brain. Inspired by neuroscience: the human brain consolidates memories during sleep—strengthening important memories, clearing useless fragments, and building new knowledge connections.
 
-Hippocampus's maintenance mode follows the exact same model, periodically initiating a "Sleep Cycle" in the background:
+Brain's maintenance mode follows the exact same model, periodically initiating a "Sleep Cycle" in the background:
 
 **NREM Phase (Deep Consolidation)**
 *   **Episodic → Semantic Consolidation:** Automatically refines 40 customer conversations from the past week into structured knowledge like, "Customer A's price sensitivity tendency increased from 7 in Q1 to 9 in Q2".
@@ -119,11 +119,11 @@ KIP defines the "Knowledge Capsule"—a standardized, idempotent knowledge packa
 
 When an enterprise needs to add a new AI digital employee—such as opening a new product line requiring a dedicated CS Agent—traditional solutions require retraining models and reorganizing knowledge bases.
 
-Under the Hippocampus architecture, the new Agent simply connects to the same Cognitive Nexus. Through a single `DESCRIBE PRIMER` call, it acquires the enterprise's global knowledge map. It doesn't need to relearn because all historical knowledge is already in the graph. This is the equivalent of a new employee possessing the organization's entire process knowledge and customer profiles on their first day.
+Under the Brain architecture, the new Agent simply connects to the same Cognitive Nexus. Through a single `DESCRIBE PRIMER` call, it acquires the enterprise's global knowledge map. It doesn't need to relearn because all historical knowledge is already in the graph. This is the equivalent of a new employee possessing the organization's entire process knowledge and customer profiles on their first day.
 
 ## Why Not Traditional Solutions?
 
-| Dimension                   | Vector RAG         | Markdown Memory | Traditional Graph DB     | **Anda Hippocampus**                   |
+| Dimension                   | Vector RAG         | Markdown Memory | Traditional Graph DB     | **Anda Brain**                         |
 | :-------------------------- | :----------------- | :-------------- | :----------------------- | :------------------------------------- |
 | Multi-hop Reasoning         | Fails              | Fair            | Good                     | **Outstanding**                        |
 | Autonomous Schema Evolution | Unsupported        | Unsupported     | Unsupported              | **Natively Supported**                 |
@@ -138,7 +138,7 @@ Under the Hippocampus architecture, the new Agent simply connects to the same Co
 
 ```
 Sales Agent records → "Customer requires delivery of 5000 units before Q3"
-                      ↓ Hippocampus Auto-Encodes
+                      ↓ Brain Auto-Encodes
 Cognitive Nexus links → Customer X -- [Requires Delivery] --> Product Y (Qty:5000, Deadline:Q3)
                       ↓ Procurement Agent Queries Memory
 Recalls Knowledge   → "Product Y's core material is supplied by Supplier A.
@@ -152,15 +152,15 @@ No human intervention is required; knowledge flows automatically across departme
 
 ### Scenario 2: Customer Relationship Graph
 
-After every customer service interaction, Hippocampus silently records shifts in customer preferences, complaint histories, and decision-making patterns. When a new CS rep takes over, they simply send a natural language query—"What does this customer care about the most?"—and receive a complete customer profile, including trend analysis of preference changes over time.
+After every customer service interaction, Brain silently records shifts in customer preferences, complaint histories, and decision-making patterns. When a new CS rep takes over, they simply send a natural language query—"What does this customer care about the most?"—and receive a complete customer profile, including trend analysis of preference changes over time.
 
 ### Scenario 3: Organizational Knowledge Inheritance
 
-Business decision discussions from veteran employees are continuously encoded into structured knowledge by Hippocampus. When the causal logic behind these decisions is settled into the graph, a new employee's AI assistant can directly answer, "Why did we abandon that plan?" The answer doesn't come from a meeting minute buried deep in a shared folder, but from a living, contextualized knowledge network.
+Business decision discussions from veteran employees are continuously encoded into structured knowledge by Brain. When the causal logic behind these decisions is settled into the graph, a new employee's AI assistant can directly answer, "Why did we abandon that plan?" The answer doesn't come from a meeting minute buried deep in a shared folder, but from a living, contextualized knowledge network.
 
 ## Deployment Options
 
-Anda Hippocampus is [fully open-source](https://github.com/ldclabs/anda-hippocampus) (Apache-2.0 License) and offers two deployment models:
+Anda Brain is [fully open-source](https://github.com/ldclabs/anda-brain) (Apache-2.0 License) and offers two deployment models:
 
 | Mode           | Suitable Scenarios                     | Description                                                    |
 | :------------- | :------------------------------------- | :------------------------------------------------------------- |
@@ -169,10 +169,10 @@ Anda Hippocampus is [fully open-source](https://github.com/ldclabs/anda-hippocam
 
 ```bash
 # Local File System Storage (For enterprise on-prem deployment)
-./anda_hippocampus -- local --db ./data
+./anda_brain -- local --db ./data
 
 # AWS S3 Storage (For enterprise cloud deployment)
-./anda_hippocampus -- aws --bucket my-bucket --region us-east-1
+./anda_brain -- aws --bucket my-bucket --region us-east-1
 ```
 
 Integration takes only three steps:
@@ -180,7 +180,7 @@ Integration takes only three steps:
 2. The Business Agent calls the `/formation` endpoint to send conversations → Knowledge is automatically encoded.
 3. The Business Agent calls the `/recall` endpoint to query memories → Receives structured answers.
 
-**No need to learn graph query languages, no need to design database schemas, no need to maintain knowledge graphs—Hippocampus handles all of this automatically.**
+**No need to learn graph query languages, no need to design database schemas, no need to maintain knowledge graphs—Brain handles all of this automatically.**
 
 ## From Buying Tools to Growing Capabilities: Knowledge Memory is the New Moat
 
@@ -188,9 +188,9 @@ Over the past thirty years, buying enterprise software essentially meant buying 
 
 In the AI era, the competitive logic for enterprises is undergoing a fundamental shift: moving from "managing assets and users" to "accumulating wisdom and creating insights". Knowledge memory is not legacy baggage; it is the **foundation of your new competitive moat**.
 
-The logic behind this is a **data flywheel**: Business Agents generate conversations in daily work → Hippocampus auto-encodes them into structured knowledge → Sleep Cycles consolidate, deduplicate, and associate → Richer knowledge leads to more precise Agent decisions → Better decisions generate higher-quality new data. The longer this closed loop runs, the stronger the enterprise's cognitive capabilities become, and the harder it is for competitors to catch up.
+The logic behind this is a **data flywheel**: Business Agents generate conversations in daily work → Brain auto-encodes them into structured knowledge → Sleep Cycles consolidate, deduplicate, and associate → Richer knowledge leads to more precise Agent decisions → Better decisions generate higher-quality new data. The longer this closed loop runs, the stronger the enterprise's cognitive capabilities become, and the harder it is for competitors to catch up.
 
-Anda Hippocampus is the engine of this flywheel. It does not lock you into a specific LLM vendor—use GPT today, switch to Claude or an open-source model tomorrow; your enterprise memory remains fully intact, and the new model instantly inherits all your knowledge. It does not require predefined, rigid industry templates or expensive engineers to manually build knowledge networks. It does one thing: **It gives AI a brain that truly belongs to your enterprise—one that can remember, forget, and grow.**
+Anda Brain is the engine of this flywheel. It does not lock you into a specific LLM vendor—use GPT today, switch to Claude or an open-source model tomorrow; your enterprise memory remains fully intact, and the new model instantly inherits all your knowledge. It does not require predefined, rigid industry templates or expensive engineers to manually build knowledge networks. It does one thing: **It gives AI a brain that truly belongs to your enterprise—one that can remember, forget, and grow.**
 
 The window of opportunity will not stay open forever. When industry pioneers have spun their knowledge flywheels thousands of times, latecomers will face not just a technological gap, but an insurmountable chasm of compounded knowledge. Start building your enterprise AI memory system now, and you are accumulating irreplaceable cognitive assets for every future Agent. Otherwise, your enterprise might just end up as a "temporary user" of someone else's AI.
 
@@ -200,7 +200,7 @@ The window of opportunity will not stay open forever. When industry pioneers hav
 
 **Start Building Your Enterprise Cognitive Brain**
 
-[Product Website](https://brain.anda.ai/) · [Management Console](https://anda.ai/brain) · [GitHub](https://github.com/ldclabs/anda-hippocampus) · [Contact Us: hi@yiwen.ai](mailto:hi@yiwen.ai)
+[Product Website](https://brain.anda.ai/) · [Management Console](https://anda.ai/brain) · [GitHub](https://github.com/ldclabs/anda-brain) · [Contact Us: hi@yiwen.ai](mailto:hi@yiwen.ai)
 
 Copyright © Yiwen Intelligent Technology (Shanghai) Co., Ltd.
 

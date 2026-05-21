@@ -1,6 +1,6 @@
 # AI Memory Must Sleep — And Only Knowledge Graphs Can Make That Happen
 
-> The real bottleneck of AI memory isn't "not remembering enough" — it's "not digesting". Anda Hippocampus uses knowledge graphs to implement a sleep mechanism that makes AI memory truly evolve and grow.
+> The real bottleneck of AI memory isn't "not remembering enough" — it's "not digesting". Anda Brain uses knowledge graphs to implement a sleep mechanism that makes AI memory truly evolve and grow.
 
 ---
 
@@ -52,25 +52,25 @@ Vectors are points. Markdown is a line. Key-value is a grid. Only a graph is a *
 
 But traditional knowledge graphs (Neo4j, SPARQL) are too heavy for AI agents — making an LLM write Cypher is like asking an intern to operate SAP bare-handed. What you need is a **lightweight graph that LLMs can autonomously build and maintain**.
 
-That's exactly what Anda Hippocampus does.
+That's exactly what Anda Brain does.
 
 ---
 
-## Part II: Anda Hippocampus — A Cognitive Organ That "Dreams"
+## Part II: Anda Brain — A Cognitive Organ That "Dreams"
 
-### Why "Hippocampus"
+### Why "Brain"
 
-The hippocampus in the human brain is the hub of the memory system. It encodes new experiences into short-term memory during the day, then collaborates with the neocortex during sleep to consolidate important short-term memories into long-term knowledge.
+The brain in the human brain is the hub of the memory system. It encodes new experiences into short-term memory during the day, then collaborates with the neocortex during sleep to consolidate important short-term memories into long-term knowledge.
 
-**[Anda Hippocampus](https://github.com/ldclabs/anda-hippocampus)** takes its name from exactly this. It's not a database. It's not a RAG pipeline. It's a **cognitive organ** — a graph-based memory engine purpose-built for AI agents. Under the hood, it maintains a continuously growing knowledge graph (which we call the **Cognitive Nexus**), and like the real hippocampus, it runs three modes to manage this graph:
+**[Anda Brain](https://github.com/ldclabs/anda-brain)** takes its name from exactly this. It's not a database. It's not a RAG pipeline. It's a **cognitive organ** — a graph-based memory engine purpose-built for AI agents. Under the hood, it maintains a continuously growing knowledge graph (which we call the **Cognitive Nexus**), and like the real brain, it runs three modes to manage this graph:
 
-| Mode            | Role                                                                          | Brain Analogy                       |
-| :-------------- | :---------------------------------------------------------------------------- | :---------------------------------- |
-| **Formation**   | Extract entities, relationships, and events from conversations into the graph | Hippocampus encodes new experiences |
-| **Recall**      | Retrieve and synthesize answers from the graph                                | Retrieving and combining memories   |
-| **Maintenance** | Background consolidation, deduplication, evolution, and pruning               | **Sleep and consolidation**         |
+| Mode            | Role                                                                          | Brain Analogy                     |
+| :-------------- | :---------------------------------------------------------------------------- | :-------------------------------- |
+| **Formation**   | Extract entities, relationships, and events from conversations into the graph | Brain encodes new experiences     |
+| **Recall**      | Retrieve and synthesize answers from the graph                                | Retrieving and combining memories |
+| **Maintenance** | Background consolidation, deduplication, evolution, and pruning               | **Sleep and consolidation**       |
 
-The third mode — Maintenance — is the core of how Anda Hippocampus implements "AI sleep".
+The third mode — Maintenance — is the core of how Anda Brain implements "AI sleep".
 
 ### The Graph: Infrastructure That Makes Sleep Possible
 
@@ -78,7 +78,7 @@ Before diving into the sleep mechanism, a fundamental question needs answering: 
 
 Because everything sleep does — compression, contradiction detection, pattern extraction, confidence decay — is fundamentally an **operation on a relationship network**.
 
-When Anda Hippocampus's Formation mode extracts knowledge from conversations, it doesn't chop text into fragments and toss them into a pool like vector RAG, nor does it append to an endlessly growing file like Markdown approaches. It precisely does three things:
+When Anda Brain's Formation mode extracts knowledge from conversations, it doesn't chop text into fragments and toss them into a pool like vector RAG, nor does it append to an endlessly growing file like Markdown approaches. It precisely does three things:
 
 1. **Identify entities**: Which people, projects, preferences, and concepts are involved in this conversation?
 2. **Establish relationships**: How are these entities connected? Alice "works at" Acme Corp. Alice "prefers" dark mode. Alice "participates in" Project Aurora.
@@ -90,7 +90,7 @@ This structure natively supports every operation that sleep requires.
 
 ### The Three-Stage Sleep Cycle
 
-Anda Hippocampus's Maintenance mode runs a complete sleep cycle, directly inspired by the three stages of human sleep in neuroscience:
+Anda Brain's Maintenance mode runs a complete sleep cycle, directly inspired by the three stages of human sleep in neuroscience:
 
 #### Stage I: NREM Deep Sleep — From Fragments to Knowledge
 
@@ -118,7 +118,7 @@ The system performs **contradiction detection** on the graph — traversing same
 
 How traditional approaches handle this: either ignore it (vector RAG lets both coexist) or overwrite crudely (key-value stores delete the old and write the new). Both are wrong.
 
-Anda Hippocampus handles this through **State Evolution**:
+Anda Brain handles this through **State Evolution**:
 
 - The old relationship is not deleted. Instead, it's marked as `superseded: true`, with `superseded_at` (when it was superseded) and `superseded_by` (what superseded it).
 - The new relationship gets boosted confidence, with `supersedes` (what it supersedes) and `evolution_note` (evolution context).
@@ -141,7 +141,7 @@ After the entire process, the knowledge graph awaits the next Formation and Reca
 
 A full sleep cycle requires deep LLM invocations — the compute cost isn't trivial. This is the "price" we mentioned earlier.
 
-But Anda Hippocampus has designed a lightweight **Daydream mode** — during pauses when the user is silent, the system doesn't enter a full sleep cycle. Instead, it does just one thing: **Salience Scoring**.
+But Anda Brain has designed a lightweight **Daydream mode** — during pauses when the user is silent, the system doesn't enter a full sleep cycle. Instead, it does just one thing: **Salience Scoring**.
 
 It quickly scans recent Event nodes and scores them by importance:
 
@@ -160,7 +160,7 @@ This is the "work – daydream – deep sleep" three-state model: far smarter th
 
 The entire sleep mechanism is completely transparent to business agents. Your AI agent doesn't need to know what KIP is, doesn't need to write graph queries, doesn't need to understand the difference between NREM and REM. It only needs to:
 
-1. **Talk**: Send conversations to Hippocampus's Formation endpoint.
+1. **Talk**: Send conversations to Brain's Formation endpoint.
 2. **Ask**: Send questions to the Recall endpoint and get back natural language answers.
 3. **Do nothing**: Sleep is automatically scheduled.
 
@@ -171,7 +171,7 @@ The entire sleep mechanism is completely transparent to business agents. Your AI
          │
          ▼
 ┌─────────────────────┐
-│    Hippocampus      │  ← Automatically translates to graph operations
+│    Brain            │  ← Automatically translates to graph operations
 │    (LLM + KIP)      │     Auto sleep, dream, consolidate
 └────────┬────────────┘
          │
@@ -181,7 +181,7 @@ The entire sleep mechanism is completely transparent to business agents. Your AI
 └─────────────────────┘
 ```
 
-Hippocampus handles all complex graph operations under the hood. KIP (Knowledge Interaction Protocol) is the bridge between LLMs and the graph — a graph interaction protocol purpose-designed for large language models, enabling LLMs to precisely query, create, and update entities and relationships in the graph without the constant errors of writing Cypher/GQL.
+Brain handles all complex graph operations under the hood. KIP (Knowledge Interaction Protocol) is the bridge between LLMs and the graph — a graph interaction protocol purpose-designed for large language models, enabling LLMs to precisely query, create, and update entities and relationships in the graph without the constant errors of writing Cypher/GQL.
 
 ---
 
@@ -191,21 +191,21 @@ Back to where we started.
 
 There are many AI memory products on the market. Most of them are doing the same thing: **making AI remember more**. Bigger vector stores, longer context windows, more sophisticated retrieval strategies.
 
-But **Anda Hippocampus** is doing something different: **teaching AI to forget, compress, evolve, and consolidate**.
+But **Anda Brain** is doing something different: **teaching AI to forget, compress, evolve, and consolidate**.
 
 Because real memory isn't a wall covered in sticky notes. It's a dynamic cognitive graph — with relationships, weights, and timelines between nodes — that quietly restructures itself when you're not looking, becoming smarter.
 
-This requires two things: **a knowledge graph capable of supporting complex relationship operations**, and **an autonomous maintenance mechanism inspired by neuroscience**. Anda Hippocampus unifies these two into a single, out-of-the-box memory service.
+This requires two things: **a knowledge graph capable of supporting complex relationship operations**, and **an autonomous maintenance mechanism inspired by neuroscience**. Anda Brain unifies these two into a single, out-of-the-box memory service.
 
 ---
 
 ### Try It Now
 
-**[Anda Hippocampus](https://github.com/ldclabs/anda-hippocampus)** is fully open source, with support for self-hosting and cloud SaaS:
+**[Anda Brain](https://github.com/ldclabs/anda-brain)** is fully open source, with support for self-hosting and cloud SaaS:
 
 - **Product website:** [https://brain.anda.ai](https://brain.anda.ai/)
 - **Console (manage brain spaces and API keys):** [https://anda.ai/brain](https://anda.ai/brain)
-- **GitHub:** [https://github.com/ldclabs/anda-hippocampus](https://github.com/ldclabs/anda-hippocampus)
+- **GitHub:** [https://github.com/ldclabs/anda-brain](https://github.com/ldclabs/anda-brain)
 
 Get started in 3 steps:
 1. Create a brain space in the [Console](https://anda.ai/brain)
@@ -216,4 +216,4 @@ Whether you're building a personal AI assistant or an enterprise-grade agent, it
 
 ---
 
-*Anda Hippocampus is proudly built by [Yiwen.AI](https://yiwen.ai/). For business inquiries, contact [hi@yiwen.ai](mailto:hi@yiwen.ai).*
+*Anda Brain is proudly built by [Yiwen.AI](https://yiwen.ai/). For business inquiries, contact [hi@yiwen.ai](mailto:hi@yiwen.ai).*

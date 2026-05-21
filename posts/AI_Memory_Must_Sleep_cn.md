@@ -1,6 +1,6 @@
 # AI 的记忆必须能睡眠——而只有知识图谱能让它入睡
 
-> AI 记忆的真正瓶颈，不在于“记不住”，而在于“不消化”。Anda Hippocampus 用知识图谱实现睡眠机制，让 AI 的记忆真正演化成长。
+> AI 记忆的真正瓶颈，不在于“记不住”，而在于“不消化”。Anda Brain 用知识图谱实现睡眠机制，让 AI 的记忆真正演化成长。
 
 ---
 
@@ -52,25 +52,25 @@
 
 但传统的知识图谱（Neo4j、SPARQL）对 AI 智能体来说太重了——让 LLM 写 Cypher 约等于让实习生徒手操作 SAP。你需要的是一种 **LLM 能自主构建、自主维护的轻量级图谱**。
 
-这正是 Anda Hippocampus 做的事。
+这正是 Anda Brain 做的事。
 
 ---
 
-## 第二部分：Anda Hippocampus —— 一颗会“做梦”的认知器官
+## 第二部分：Anda Brain —— 一颗会“做梦”的认知器官
 
-### 为什么叫“海马体”
+### 为什么叫“大脑”
 
-人类大脑中的海马体（Hippocampus）是记忆系统的中枢。它负责在白天将新体验编码为短期记忆，然后在睡眠期间与新皮层协作，将重要的短期记忆巩固为长期知识。
+人类大脑中的大脑（Brain）是记忆系统的中枢。它负责在白天将新体验编码为短期记忆，然后在睡眠期间与新皮层协作，将重要的短期记忆巩固为长期知识。
 
-**[Anda Hippocampus](https://github.com/ldclabs/anda-hippocampus)** 的命名正源于此。它不是一个数据库，也不是一个 RAG 管线——它是一个**认知器官**，一个专为 AI 智能体设计的图谱记忆引擎。它在底层维护一个持续增长的知识图谱（我们称之为 **Cognitive Nexus/认知中枢**），并像真正的海马体一样，运行三种模式来管理这个图谱：
+**[Anda Brain](https://github.com/ldclabs/anda-brain)** 的命名正源于此。它不是一个数据库，也不是一个 RAG 管线——它是一个**认知器官**，一个专为 AI 智能体设计的图谱记忆引擎。它在底层维护一个持续增长的知识图谱（我们称之为 **Cognitive Nexus/认知中枢**），并像真正的大脑一样，运行三种模式来管理这个图谱：
 
-| 模式                   | 角色                                   | 大脑类比         |
-| :--------------------- | :------------------------------------- | :--------------- |
-| **生成 (Formation)**   | 从对话中提取实体、关系、事件，写入图谱 | 海马体编码新体验 |
-| **召回 (Recall)**      | 从图谱中检索并合成答案                 | 检索与组合记忆   |
-| **维护 (Maintenance)** | 后台整合、去重、演化、修剪知识         | **睡眠与巩固**   |
+| 模式                   | 角色                                   | 大脑类比       |
+| :--------------------- | :------------------------------------- | :------------- |
+| **生成 (Formation)**   | 从对话中提取实体、关系、事件，写入图谱 | 大脑编码新体验 |
+| **召回 (Recall)**      | 从图谱中检索并合成答案                 | 检索与组合记忆 |
+| **维护 (Maintenance)** | 后台整合、去重、演化、修剪知识         | **睡眠与巩固** |
 
-第三种模式——维护——正是 Anda Hippocampus 实现“AI 睡眠”的核心。
+第三种模式——维护——正是 Anda Brain 实现“AI 睡眠”的核心。
 
 ### 图谱：让睡眠成为可能的基础设施
 
@@ -78,7 +78,7 @@
 
 因为睡眠所做的每一件事——压缩、矛盾检测、模式提取、置信度衰减——本质上都是**对关系网络的操作**。
 
-当 Anda Hippocampus 的 Formation 模式从对话中提取知识时，它不会像向量 RAG 那样把文本切成碎片扔进池子，也不会像 Markdown 方案那样追加到一个无限增长的文件末尾。它会精准地做三件事：
+当 Anda Brain 的 Formation 模式从对话中提取知识时，它不会像向量 RAG 那样把文本切成碎片扔进池子，也不会像 Markdown 方案那样追加到一个无限增长的文件末尾。它会精准地做三件事：
 
 1. **识别实体**：这段对话涉及哪些人、项目、偏好、概念？
 2. **建立关系**：这些实体之间有什么关联？Alice “工作于” Acme 公司，Alice “偏好” 深色模式，Alice “参与了” Aurora 项目。
@@ -90,7 +90,7 @@
 
 ### 三阶段睡眠周期
 
-Anda Hippocampus 的维护模式运行一个完整的睡眠周期，直接借鉴了神经科学中人类睡眠的三个阶段：
+Anda Brain 的维护模式运行一个完整的睡眠周期，直接借鉴了神经科学中人类睡眠的三个阶段：
 
 #### 阶段一：NREM 深睡眠 —— 从碎片到知识
 
@@ -118,7 +118,7 @@ Anda Hippocampus 的维护模式运行一个完整的睡眠周期，直接借鉴
 
 传统方案的处理方式：要么无视（向量 RAG 让两条并存），要么粗暴覆盖（键值存储直接删旧写新）。两种都是错的。
 
-Anda Hippocampus 的处理方式是**状态演化（State Evolution）**：
+Anda Brain 的处理方式是**状态演化（State Evolution）**：
 
 - 旧关系不被删除，而是被标记为 `superseded: true`，附带 `superseded_at`（何时被取代）和 `superseded_by`（被什么取代）。
 - 新关系被增强置信度，附带 `supersedes`（取代了什么）和 `evolution_note`（演化说明）。
@@ -141,7 +141,7 @@ Anda Hippocampus 的处理方式是**状态演化（State Evolution）**：
 
 完整的睡眠周期需要深度调用 LLM，算力成本不低。这正是我们前面提到的“代价”。
 
-但 Anda Hippocampus 设计了一个轻量级的 **Daydream（出神）模式**——在用户沉默的间隙，系统不进入完整睡眠，而是只做一件事：**显著性评分（Salience Scoring）**。
+但 Anda Brain 设计了一个轻量级的 **Daydream（出神）模式**——在用户沉默的间隙，系统不进入完整睡眠，而是只做一件事：**显著性评分（Salience Scoring）**。
 
 它快速扫描最近的 Event 节点，根据内容的重要程度打分：
 
@@ -160,7 +160,7 @@ Anda Hippocampus 的处理方式是**状态演化（State Evolution）**：
 
 整个睡眠机制对业务智能体完全透明。你的 AI 智能体不需要知道 KIP 是什么，不需要写图查询语句，不需要理解 NREM 和 REM 的区别。它只需要：
 
-1. **说话**：把对话发给 Hippocampus 的 Formation 端点。
+1. **说话**：把对话发给 Brain 的 Formation 端点。
 2. **提问**：把问题发给 Recall 端点，拿回自然语言的回答。
 3. **什么都不做**：睡眠是自动调度的。
 
@@ -171,7 +171,7 @@ Anda Hippocampus 的处理方式是**状态演化（State Evolution）**：
          │
          ▼
 ┌─────────────────────┐
-│    Hippocampus      │  ← 自动翻译为图谱操作
+│    Brain            │  ← 自动翻译为图谱操作
 │    (LLM + KIP)      │     自动睡眠、做梦、巩固
 └────────┬────────────┘
          │
@@ -181,7 +181,7 @@ Anda Hippocampus 的处理方式是**状态演化（State Evolution）**：
 └─────────────────────┘
 ```
 
-Hippocampus 在底层完成了所有复杂的图谱操作。KIP（Knowledge Interaction Protocol，知识交互协议）是 LLM 与图谱之间的桥梁——一种专为大语言模型设计的图谱交互协议，让 LLM 能精准地查询、创建、更新图谱中的实体和关系，而不会像写 Cypher/GQL 那样频频出错。
+Brain 在底层完成了所有复杂的图谱操作。KIP（Knowledge Interaction Protocol，知识交互协议）是 LLM 与图谱之间的桥梁——一种专为大语言模型设计的图谱交互协议，让 LLM 能精准地查询、创建、更新图谱中的实体和关系，而不会像写 Cypher/GQL 那样频频出错。
 
 ---
 
@@ -191,21 +191,21 @@ Hippocampus 在底层完成了所有复杂的图谱操作。KIP（Knowledge Inte
 
 市面上有很多 AI 记忆产品。它们大多在做同一件事：**让 AI 记住更多**。更大的向量库，更长的上下文窗口，更精巧的检索策略。
 
-但 **Anda Hippocampus** 在做一件不同的事：**让 AI 学会遗忘、压缩、演化和巩固**。
+但 **Anda Brain** 在做一件不同的事：**让 AI 学会遗忘、压缩、演化和巩固**。
 
 因为真正的记忆不是一面贴满便利贴的墙。它是一个动态的认知图谱——节点之间有关系、有权重、有时间线，而且在你不注意的时候，它在悄悄重构自己，变得更聪明。
 
-这需要两样东西：**一个能支撑复杂关系操作的知识图谱**，和**一套受神经科学启发的自主维护机制**。Anda Hippocampus 把这两样东西合为一体，封装成了一个开箱即用的记忆服务。
+这需要两样东西：**一个能支撑复杂关系操作的知识图谱**，和**一套受神经科学启发的自主维护机制**。Anda Brain 把这两样东西合为一体，封装成了一个开箱即用的记忆服务。
 
 ---
 
 ### 现在就试试
 
-**[Anda Hippocampus](https://github.com/ldclabs/anda-hippocampus)** 完全开源，支持自部署和云端 SaaS：
+**[Anda Brain](https://github.com/ldclabs/anda-brain)** 完全开源，支持自部署和云端 SaaS：
 
 - **产品网站：** [https://brain.anda.ai](https://brain.anda.ai/)
 - **控制台（管理大脑空间和 API Key）：** [https://anda.ai/brain](https://anda.ai/brain)
-- **GitHub：** [https://github.com/ldclabs/anda-hippocampus](https://github.com/ldclabs/anda-hippocampus)
+- **GitHub：** [https://github.com/ldclabs/anda-brain](https://github.com/ldclabs/anda-brain)
 
 3 步上手：
 1. 在 [控制台](https://anda.ai/brain) 创建一个大脑空间
@@ -216,4 +216,4 @@ Hippocampus 在底层完成了所有复杂的图谱操作。KIP（Knowledge Inte
 
 ---
 
-*Anda Hippocampus 由 [Yiwen.AI](https://yiwen.ai/) 荣誉出品。商务合作请联系 [hi@yiwen.ai](mailto:hi@yiwen.ai)。*
+*Anda Brain 由 [Yiwen.AI](https://yiwen.ai/) 荣誉出品。商务合作请联系 [hi@yiwen.ai](mailto:hi@yiwen.ai)。*

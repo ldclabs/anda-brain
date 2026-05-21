@@ -25,5 +25,5 @@ target
 .vscode/
 node_modules/
 dist/
-anda-brain
+anda-brain-demo
 claw

@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"github.com/ldclabs/anda-hippocampus/anda-cli/api"
+	"github.com/ldclabs/anda-brain/anda-cli/api"
 	"github.com/spf13/cobra"
 )
 

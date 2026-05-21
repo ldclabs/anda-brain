@@ -59,7 +59,7 @@ jobs:
 
       - name: Build Rust binary
         run: |
-          cargo build --release --locked -p anda_hippocampus --target ${{ matrix.rust_target }}
+          cargo build --release --locked -p anda_brain --target ${{ matrix.rust_target }}
 
       - name: Build Go binary
         working-directory: anda-cli
@@ -74,7 +74,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p release
-          cp "target/${{ matrix.rust_target }}/release/anda_hippocampus${{ matrix.exe_ext }}" "release/anda_hippocampus-${{ matrix.target }}${{ matrix.exe_ext }}"
+          cp "target/${{ matrix.rust_target }}/release/anda_brain${{ matrix.exe_ext }}" "release/anda_brain-${{ matrix.target }}${{ matrix.exe_ext }}"
           cp "anda-cli/anda-cli${{ matrix.exe_ext }}" "release/anda-cli-${{ matrix.target }}${{ matrix.exe_ext }}"
 
           for file in release/*; do
@@ -90,8 +90,8 @@ jobs:
           bundle="release/anda-bundle-${{ matrix.target }}.zip"
           bundle_name="$(basename "$bundle")"
           files=(
-            "anda_hippocampus-${{ matrix.target }}${{ matrix.exe_ext }}"
-            "anda_hippocampus-${{ matrix.target }}${{ matrix.exe_ext }}.sha256"
+            "anda_brain-${{ matrix.target }}${{ matrix.exe_ext }}"
+            "anda_brain-${{ matrix.target }}${{ matrix.exe_ext }}.sha256"
             "anda-cli-${{ matrix.target }}${{ matrix.exe_ext }}"
             "anda-cli-${{ matrix.target }}${{ matrix.exe_ext }}.sha256"
           )

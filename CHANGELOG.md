@@ -1,6 +1,11 @@
 # Changelog
 
-All notable changes to the Anda Hippocampus project.
+All notable changes to the Anda Brain project.
+
+## [0.6.0] — 2026-05-21
+
+### Changed
+- **Project renamed from `anda-hippocampus` to `anda-brain`.** All crate names, directory names, asset files, OpenClaw plugin, CI workflows, Docker images, systemd service, Cargo/pnpm workspaces, Go module paths, and documentation updated accordingly.
 
 ## [0.5.4] — 2026-05-17
 
@@ -9,11 +14,11 @@ All notable changes to the Anda Hippocampus project.
 
 **Engine changelog (cumulative 0.12.9–0.12.12):**
 
-| Version | Summary |
-|---------|---------|
-| **0.12.9** | `steering_message` / `follow_up_message` upgraded from `Vec<String>` to `Vec<ContentPart>` — multimodal passthrough for steer/follow-up content. |
-| **0.12.10** | `implicit_context` — injectable one-shot context that doesn't persist in message history. Fixed prompt ordering (system messages now consistently first) across all 4 providers (Anthropic, Gemini, OpenAI, OpenAIv2). |
-| **0.12.11** | Prevent `implicit_context` injection on tool-call turns (only injects when assistant actually responds). **DeepSeek compatibility**: skip `tool_choice` parameter for DeepSeek models (API doesn't support it). |
+| Version     | Summary                                                                                                                                                                                                                                                                                                                                                              |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **0.12.9**  | `steering_message` / `follow_up_message` upgraded from `Vec<String>` to `Vec<ContentPart>` — multimodal passthrough for steer/follow-up content.                                                                                                                                                                                                                     |
+| **0.12.10** | `implicit_context` — injectable one-shot context that doesn't persist in message history. Fixed prompt ordering (system messages now consistently first) across all 4 providers (Anthropic, Gemini, OpenAI, OpenAIv2).                                                                                                                                               |
+| **0.12.11** | Prevent `implicit_context` injection on tool-call turns (only injects when assistant actually responds). **DeepSeek compatibility**: skip `tool_choice` parameter for DeepSeek models (API doesn't support it).                                                                                                                                                      |
 | **0.12.12** | **Tool output splitting**: multi-tool-output `Message`s now split into separate tool-role `MessageInput`s, each with its own `tool_call_id` (fixes protocol violation). **Message round-trip rewrite**: image/audio/file/video/refusal content parts preserved during `MessageOutput → Message` conversion (were silently lost). `msg.name` now survives round-trip. |
 
 ## [0.5.3] — 2026-05-16
@@ -59,4 +64,4 @@ All notable changes to the Anda Hippocampus project.
 ### Internal
 - Upgrade `anda_engine` dependency path from 0.11.22 → 0.12.0.
 - Migrate `EngineModelConfig` from `label` to `labels` field.
-- Bump all components to 0.5.0: `anda_hippocampus`, `anda-cli`, `anda-hippocampus-openclaw`.
+- Bump all components to 0.5.0: `anda_brain`, `anda-cli`, `anda-brain-openclaw`.

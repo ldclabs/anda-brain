@@ -1,4 +1,4 @@
-# Anda Hippocampus 快速开始
+# Anda Brain 快速开始
 
 本文提供一条从 0 到可用的最小流程，包含：
 
@@ -34,19 +34,19 @@ mkdir db
 
 仓库 Releases：
 
-- https://github.com/ldclabs/anda-hippocampus/releases
+- https://github.com/ldclabs/anda-brain/releases
 
 下载与你系统匹配的 `anda-cli` 可执行文件后：
 
 ```bash
-wget -O anda-cli https://github.com/ldclabs/anda-hippocampus/releases/download/v0.3.2/anda-cli-macos-arm64
+wget -O anda-cli https://github.com/ldclabs/anda-brain/releases/download/v0.6.0/anda-cli-macos-arm64
 chmod +x anda-cli
 ```
 
 ### 方案 B：本地构建 `anda-cli`
 
 ```bash
-cd path/to/anda-hippocampus/anda-cli
+cd path/to/anda-brain/anda-cli
 go build -o anda-cli .
 chmod +x anda-cli
 mv anda-cli ../anda-brain/
@@ -70,7 +70,7 @@ cat keys.json
 
 ### 3.2 配置通用环境变量
 
-创建运行 Anda Hippocampus 需要的 `.env` 文件，内容示例如下：
+创建运行 Anda Brain 需要的 `.env` 文件，内容示例如下：
 ```bash
 LOG_LEVEL='info'
 LISTEN_ADDR='0.0.0.0:8042'
@@ -86,24 +86,24 @@ MODEL_API_BASE='https://api.minimaxi.com/anthropic/v1'
 MODEL_API_KEY='YOUR_MODEL_API_KEY'
 ```
 
-## 4. 启动 Anda Hippocampus（本地文件存储）
+## 4. 启动 Anda Brain（本地文件存储）
 
 二选一：本地构建运行，或 Docker 运行（支持远端拉取镜像）。
 
 ### 方案 A：本地构建运行
 
 ```bash
-cd path/to/anda-hippocampus
-cargo build -p anda_hippocampus --release
-mv target/release/anda_hippocampus ../anda-brain/
+cd path/to/anda-brain
+cargo build -p anda_brain --release
+mv target/release/anda_brain ../anda-brain/
 cd ../anda-brain/
 
-./anda_hippocampus local --db ./db
+./anda_brain local --db ./db
 ```
 
-如果你不想本地编译，也可以在 Releases 页面下载对应系统的 `anda_hippocampus` 可执行程序：
+如果你不想本地编译，也可以在 Releases 页面下载对应系统的 `anda_brain` 可执行程序：
 
-- https://github.com/ldclabs/anda-hippocampus/releases
+- https://github.com/ldclabs/anda-brain/releases
 
 下载后同样使用 `local --db ./db` 启动即可。
 
@@ -117,19 +117,19 @@ cd ../anda-brain/
 ```bash
 export DOCKER_PLATFORM=linux/amd64
 
-docker pull --platform $DOCKER_PLATFORM ghcr.io/ldclabs/anda_hippocampus_amd64:latest
+docker pull --platform $DOCKER_PLATFORM ghcr.io/ldclabs/anda_brain_amd64:latest
 
 docker run --rm --platform $DOCKER_PLATFORM -p 8042:8042 \
 	-v "$(pwd)/db:/app/db" \
   -v "$(pwd)/.env:/app/.env" \
-	ghcr.io/ldclabs/anda_hippocampus_amd64:latest local --db /app/db
+	ghcr.io/ldclabs/anda_brain_amd64:latest local --db /app/db
 ```
 
 #### B2. 本地构建 Docker 镜像
 
 ```bash
 # Apple Silicon 推荐构建 arm64 本地镜像
-docker buildx build --platform linux/arm64 -f anda_hippocampus/Dockerfile -t anda_hippocampus:local --load .
+docker buildx build --platform linux/arm64 -f anda_brain/Dockerfile -t anda_brain:local --load .
 ```
 
 ### 4.2 验证服务可用

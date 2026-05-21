@@ -1,11 +1,11 @@
 # Anda CLI
 
-A command-line tool for interacting with the [Anda Hippocampus](https://brain.anda.ai) memory service API.
+A command-line tool for interacting with the [Anda Brain](https://brain.anda.ai) memory service API.
 
 ## Install
 
 ```bash
-go install github.com/ldclabs/anda-hippocampus/anda-cli@latest
+go install github.com/ldclabs/anda-brain/anda-cli@latest
 ```
 
 Or build from source:

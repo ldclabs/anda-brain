@@ -1,4 +1,9 @@
 packages:
-  - 'anda-hippocampus-openclaw'
+  - 'anda-brain-openclaw'
+allowBuilds:
+  esbuild: true
+  koffi: true
+  protobufjs: true
+  sharp: true
 onlyBuiltDependencies:
   - esbuild

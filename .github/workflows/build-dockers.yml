@@ -8,7 +8,7 @@ on:
         type: string
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ldclabs/anda_hippocampus
+  IMAGE_NAME: ldclabs/anda_brain
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -21,4 +21,4 @@ jobs:
           IMAGE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}_amd64:${{ inputs.build_tag }}"
           LATEST_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}_amd64:latest"
           TAGS="-t ${IMAGE_TAG} -t ${LATEST_TAG}"
-          docker build -f anda_hippocampus/Dockerfile $TAGS --push .
+          docker build -f anda_brain/Dockerfile $TAGS --push .

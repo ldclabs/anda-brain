@@ -304,7 +304,7 @@ There are three structural tensions to note:
 
 These are not "flaws" in Claude Code—in its intended use case, these are highly pragmatic engineering trade-offs. However, they point to a deeper truth: **For AI to possess true long-term memory, the underlying data structure likely needs to evolve from "files" to "graphs".** A network woven from entities (nodes) and relationships (edges) naturally supports traversal, tracking evolutionary contradictions, and cross-event pattern extraction.
 
-If you are interested in this direction, check out [**Anda Hippocampus**](https://github.com/ldclabs/anda-hippocampus)—an open-source project that draws inspiration from the human hippocampus, substituting Markdown files with Knowledge Graphs for AI memory consolidation. Its core philosophy is: **Consumed tokens should not simply evaporate; they should crystallize into reusable, transferable, structured cognitive assets that are not bound to any specific model.**
+If you are interested in this direction, check out [**Anda Brain**](https://github.com/ldclabs/anda-brain)—an open-source project that draws inspiration from the human brain, substituting Markdown files with Knowledge Graphs for AI memory consolidation. Its core philosophy is: **Consumed tokens should not simply evaporate; they should crystallize into reusable, transferable, structured cognitive assets that are not bound to any specific model.**
 
 ---
 

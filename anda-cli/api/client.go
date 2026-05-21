@@ -17,7 +17,7 @@ const (
 	DefaultTimeout = 120 * time.Second
 )
 
-// Client is the HTTP client for the Anda Hippocampus API.
+// Client is the HTTP client for the Anda Brain API.
 type Client struct {
 	BaseURL    string
 	SpaceID    string
