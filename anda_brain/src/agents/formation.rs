@@ -446,12 +446,11 @@ impl Agent<AgentCtx> for FormationAgent {
     ) -> Result<AgentOutput, BoxError> {
         let caller = ctx.caller();
         let now_ms = unix_ms();
-        let max_fomation_tokens = (ctx.model.context_window / 2).max(100000);
         let token_count = estimate_tokens(&prompt);
-        if token_count > max_fomation_tokens {
+        if token_count > self.max_input_tokens {
             return Err(format!(
                 "Input too large: {} tokens (estimated), max allowed is {} tokens",
-                token_count, max_fomation_tokens
+                token_count, self.max_input_tokens
             )
             .into());
         }

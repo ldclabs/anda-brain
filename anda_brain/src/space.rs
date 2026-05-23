@@ -887,11 +887,7 @@ impl Space {
         let note_tool = NoteTool::new();
 
         let hooks = Arc::new(Hooks::new(db.clone()));
-        let formation = Arc::new(FormationAgent::new(
-            memory.clone(),
-            hooks.clone(),
-            65535 * 5,
-        ));
+        let formation = Arc::new(FormationAgent::new(memory.clone(), hooks.clone(), 100000));
         let recall = Arc::new(RecallAgent::new(
             memory.clone(),
             Conversations {
