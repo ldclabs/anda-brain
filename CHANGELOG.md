@@ -2,6 +2,25 @@
 
 All notable changes to the Anda Brain project.
 
+## [0.6.4] — 2026-05-27
+
+### Changed
+- **SKILL.md relocated from `anda_brain/` to `skills/anda-brain/`.** The skill file now lives in the top-level skills directory alongside other agent skills. Updated `handler.rs` `include_str!` path and `README.md` link accordingly.
+- **`MODEL_CONTEXT_WINDOW` default reduced** from 1,000,000 to 400,000 in `main.rs` — reflects the typical context window of currently used models.
+
+### Fixed
+- ASCII art box alignment across all docs (`README.md`, `README_cn.md`, `anda_brain/README.md`, `WEBSITE.md`, `WEBSITE_cn.md`).
+
+### Dependencies
+- `anda_engine` 0.12.21 → 0.12.23.
+- `reqwest` 0.13.3 → 0.13.4.
+- `http` 1.4.0 → 1.4.1.
+- `log` 0.4.29 → 0.4.30.
+- `memchr` 2.8.0 → 2.8.1.
+- `serde-saphyr` 0.0.26 → 0.0.27.
+- `sval` family 2.19.0 → 2.20.0.
+- `granit-parser` 0.0.2 → 0.0.3.
+
 ## [0.6.0] — 2026-05-21
 
 ### Changed

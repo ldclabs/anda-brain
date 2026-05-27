@@ -64,7 +64,7 @@ This is exactly where **Anda Brain** gets its name. It is not a database, nor is
                  │ Natural Language / Function Calling
                  ▼
 ┌──────────────────────────────────────────┐
-│         Anda Brain                 │  ← Unified Cognitive Engine
+│             Anda Brain                   │  ← Unified Cognitive Engine
 │   Translates intents to graph ops,       │    Handles encoding, recall, maintenance
 │   manages knowledge quality              │
 └────────────────┬─────────────────────────┘

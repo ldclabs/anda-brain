@@ -14,7 +14,7 @@ Business agents interact entirely through natural language and a REST API — no
          │ Natural Language / REST API
          ▼
 ┌─────────────────────┐
-│    Brain      │  ← The ONLY layer that understands KIP
+│      Brain          │  ← The ONLY layer that understands KIP
 │   (LLM + KIP)       │    Three agents: Formation / Recall / Maintenance
 └────────┬────────────┘
          │ KIP (KQL / KML / META)
@@ -99,7 +99,7 @@ Consolidates, prunes, and optimizes the knowledge graph during scheduled or on-d
 Detailed API docs (with TypeScript request/response types):
 - English: [API.md](https://github.com/ldclabs/anda-brain/blob/main/anda_brain/API.md)
 - 中文: [API_cn.md](https://github.com/ldclabs/anda-brain/blob/main/anda_brain/API_cn.md)
-- Agent Skill: [SKILL.md](https://github.com/ldclabs/anda-brain/blob/main/anda_brain/SKILL.md)
+- Agent Skill: [SKILL.md](https://github.com/ldclabs/anda-brain/blob/main/skills/anda-brain/SKILL.md)
 
 | Method  | Path                                             | Description                                                                   | Auth Scope                   |
 | ------- | ------------------------------------------------ | ----------------------------------------------------------------------------- | ---------------------------- |

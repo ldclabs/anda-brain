@@ -56,7 +56,7 @@ struct Cli {
     #[arg(long, env = "MODEL_API_KEY", default_value = "")]
     model_api_key: String,
 
-    #[arg(long, env = "MODEL_CONTEXT_WINDOW", default_value_t = 1000000)]
+    #[arg(long, env = "MODEL_CONTEXT_WINDOW", default_value_t = 400000)]
     model_context_window: usize,
 
     #[arg(long, env = "MODEL_MAX_OUTPUT", default_value_t = 384000)]
