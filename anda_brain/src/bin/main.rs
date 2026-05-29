@@ -1,4 +1,4 @@
-use anda_core::{BoxError, Principal};
+use anda_core::{BoxError, ModelEffort, Principal};
 use anda_db::{database::DBConfig, storage::StorageConfig};
 use anda_engine::{
     management::{BaseManagement, Visibility},
@@ -183,6 +183,7 @@ async fn main() -> Result<(), BoxError> {
         labels: vec![],
         bearer_auth: false,
         stream: false,
+        effort: Some(ModelEffort::High),
     };
     models.set_model(model_config.model(http_client.clone())?);
 

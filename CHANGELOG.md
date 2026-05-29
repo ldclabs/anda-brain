@@ -2,6 +2,40 @@
 
 All notable changes to the Anda Brain project.
 
+## [0.6.5] — 2026-05-29
+
+### Changed
+- **Dropped "(大脑)" Chinese annotations from Brain identity.** All three KIP prompts (`BrainFormation`, `BrainMaintenance`, `BrainRecall`) now refer to "Brain" without the parenthetical Chinese label — the name is self-sufficient.
+- **Default `memory_tier` changed from `episodic` to `short-term`** in Formation's event encoding template. New events start as short-term and graduate to episodic only after Maintenance validates them.
+
+### Added
+- **Flashbulb salience encoding in Formation.** Phase 2 now supports setting an initial `salience_score` (60–100) for emotionally charged moments (corrections, breakthroughs, strong commitments) so they resist decay from the start.
+- **Reinforcement (spacing effect) in Formation.** Phase 3 ("Deduplicate & Reinforce") now strengthens re-confirmed facts — bump `evidence_count`, refresh `last_observed`, nudge `confidence` upward (cap 0.99). The counter-force to Maintenance's decay.
+- **Associative encoding in Formation.** Phase 5b now links new concepts to already-grounded related concepts via existing predicates, forming a connected web for better recall.
+- **Flashbulb salience protection in Maintenance.** Scoring now refines existing `salience_score` rather than blindly overwriting — flashbulb memories are preserved.
+- **`resolve_contradiction` task action in Maintenance.** New action for reconciling conflicting facts (supersede the older, strengthen the current).
+- **Strength-aware (asymmetric) decay in Maintenance.** Reinforced memories (high `evidence_count`, recent `last_observed`, high `salience_score`) decay slowly; low-salience/unreinforced facts fade faster — "use it or lose it" pruning.
+- **Pattern K — Contextual Briefing in Recall.** Assembles identity + preferences + recent Events + commitments + Insights into a single composite briefing for the common "what should I know before I respond?" query.
+- **Memory strength ranking in Recall.** Reinforced facts (high `evidence_count` + recent `last_observed`) now sort first; tie-break by recency then confidence.
+- **`ModelEffort` wiring.** `ModelConfig` and `ModelConfigRef` now support an `effort` field (`serde` alias `e`), wired through to the engine. `main.rs` defaults to `ModelEffort::High`.
+
+### Removed
+- Redundant KIP `SPECIFICATION.md` links from all three prompts — the runtime auto-injects the primer.
+- `Keep the response short` instruction from Formation's output format section — unnecessary constraint on the model's response style.
+
+### Dependencies
+- `anda_core` 0.12.3 → 0.12.4.
+- `anda_engine` 0.12.23 → 0.12.24.
+- `anda_kip` 0.7.12 → 0.7.13.
+- `anda_cognitive_nexus` 0.7.18 → 0.7.19.
+- `hyper` 1.9.0 → 1.10.0.
+- `candid` 0.10.28 → 0.10.29.
+- `zerocopy` 0.8.48 → 0.8.49.
+- `displaydoc` 0.2.5 → 0.2.6.
+- `socket2` 0.6.3 → 0.6.4.
+- `mio` 1.2.0 → 1.2.1.
+- `cmov` 0.5.3 → 0.5.4.
+
 ## [0.6.4] — 2026-05-27
 
 ### Changed

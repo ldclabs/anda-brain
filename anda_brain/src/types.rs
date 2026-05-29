@@ -1,4 +1,4 @@
-use anda_core::{BoxError, Principal, Usage, model::Message};
+use anda_core::{BoxError, ModelEffort, Principal, Usage, model::Message};
 use anda_db::storage::StorageStats;
 use anda_engine::model::ModelConfig as EngineModelConfig;
 use ic_cose_types::cose::cwt::{ClaimsSet, get_scope};
@@ -99,6 +99,9 @@ pub struct ModelConfig {
     #[serde(default, alias = "l")]
     pub label: Option<String>,
 
+    #[serde(default, alias = "e")]
+    pub effort: Option<ModelEffort>,
+
     #[serde(default, alias = "b")]
     pub bearer_auth: bool,
 
@@ -132,6 +135,9 @@ pub struct ModelConfigRef<'a> {
     #[serde(rename = "l")]
     pub label: &'a Option<String>,
 
+    #[serde(rename = "e")]
+    pub effort: Option<ModelEffort>,
+
     #[serde(rename = "b")]
     pub bearer_auth: bool,
 
@@ -154,6 +160,7 @@ impl ModelConfig {
             api_key: &self.api_key,
             disabled: self.disabled,
             label: &self.label,
+            effort: self.effort,
             bearer_auth: self.bearer_auth,
             stream: self.stream,
             context_window: self.context_window,
@@ -171,6 +178,7 @@ impl From<ModelConfig> for EngineModelConfig {
             api_key: config.api_key,
             disabled: config.disabled,
             labels: config.label.map(|l| vec![l]).unwrap_or_default(),
+            effort: config.effort,
             bearer_auth: config.bearer_auth,
             stream: config.stream,
             context_window: config.context_window,
