@@ -1,9 +1,11 @@
+use anda_cognitive_nexus::ConceptPK;
 use anda_core::{
     Agent, AgentContext, AgentOutput, BoxError, CompletionFeatures, CompletionRequest, Document,
-    Documents, FunctionDefinition, Json, Message, Resource, StateFeatures,
+    Documents, FunctionDefinition, Json, Message, Resource, StateFeatures, Tool, ToolOutput,
+    estimate_tokens,
 };
 use anda_engine::{
-    context::AgentCtx,
+    context::{AgentCtx, BaseCtx},
     extension::note::{NoteTool, load_notes},
     local_date_hour,
     memory::{
@@ -13,16 +15,22 @@ use anda_engine::{
     unix_ms,
 };
 use parking_lot::RwLock;
-use serde_json::{Map, json};
+use serde_json::json;
 use std::{
     collections::VecDeque,
     sync::{Arc, LazyLock},
+    time::Duration,
 };
+use tokio::time::timeout;
+
+use anda_kip::{KipError, KipErrorCode, Request, Response};
 
 use super::{BrainHook, SELF_USER_ID};
 use crate::types::RecallInput;
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/BrainRecall.md");
+const RECALL_CONTEXT_TIMEOUT: Duration = Duration::from_secs(2);
+pub const READONLY_KIP_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub static FUNCTION_DEFINITION: LazyLock<FunctionDefinition> = LazyLock::new(|| {
     serde_json::from_value(json!({
@@ -91,6 +99,76 @@ pub static FUNCTION_DEFINITION: LazyLock<FunctionDefinition> = LazyLock::new(|| 
 });
 
 #[derive(Clone)]
+pub struct TimedMemoryReadonly {
+    memory: Arc<MemoryManagement>,
+    timeout: Duration,
+}
+
+impl TimedMemoryReadonly {
+    pub fn new(memory: Arc<MemoryManagement>) -> Self {
+        Self {
+            memory,
+            timeout: READONLY_KIP_TIMEOUT,
+        }
+    }
+}
+
+impl Tool<BaseCtx> for TimedMemoryReadonly {
+    type Args = Request;
+    type Output = Response;
+
+    fn name(&self) -> String {
+        MemoryReadonly::NAME.to_string()
+    }
+
+    fn description(&self) -> String {
+        "Executes one or more KIP (Knowledge Interaction Protocol) commands against the Cognitive Nexus to read from your persistent memory. This tool does not allow any modifications to the memory and is safe to use for retrieval operations.".to_string()
+    }
+
+    fn definition(&self) -> FunctionDefinition {
+        FunctionDefinition {
+            name: self.name(),
+            description: self.description(),
+            parameters: self.memory.kip_function_definitions.parameters.clone(),
+            strict: Some(true),
+        }
+    }
+
+    async fn call(
+        &self,
+        _ctx: BaseCtx,
+        mut request: Self::Args,
+        _resources: Vec<Resource>,
+    ) -> Result<ToolOutput<Self::Output>, BoxError> {
+        let res = match timeout(
+            self.timeout,
+            request.readonly().execute(self.memory.nexus.as_ref()),
+        )
+        .await
+        {
+            Ok((_, res)) => res,
+            Err(_) => Response::err(KipError::new(
+                KipErrorCode::ExecutionTimeout,
+                format!(
+                    "read-only KIP execution timed out after {} seconds; memory is busy, retry later",
+                    self.timeout.as_secs()
+                ),
+            )),
+        };
+
+        let is_error = if matches!(res, Response::Err { .. }) {
+            Some(true)
+        } else {
+            None
+        };
+
+        let mut output = ToolOutput::new(res);
+        output.is_error = is_error;
+        Ok(output)
+    }
+}
+
+#[derive(Clone)]
 pub struct RecallAgent {
     pub conversations: Conversations,
     memory: Arc<MemoryManagement>,
@@ -126,24 +204,14 @@ impl RecallAgent {
         Ok(())
     }
 
-    pub async fn get_or_init_counterparty(
-        &self,
-        counterparty: String,
-        name: Option<String>,
-    ) -> Result<Json, BoxError> {
-        let mut attributes = Map::new();
-        let mut metadata = Map::new();
-        attributes.insert("id".to_string(), counterparty.clone().into());
-        attributes.insert("person_class".to_string(), "Human".into());
-        if let Some(name) = name {
-            attributes.insert("name".to_string(), name.into());
-        }
-        metadata.insert("author".to_string(), "$system".into());
-        metadata.insert("status".to_string(), "active".into());
+    pub async fn get_counterparty(&self, counterparty: &str) -> Result<Json, BoxError> {
         let user = self
             .memory
             .nexus
-            .get_or_init_concept("Person".to_string(), counterparty, attributes, metadata)
+            .get_concept(&ConceptPK::Object {
+                r#type: "Person".to_string(),
+                name: counterparty.to_string(),
+            })
             .await?;
 
         Ok(user.to_concept_node())
@@ -179,12 +247,44 @@ impl Agent<AgentCtx> for RecallAgent {
     ) -> Result<AgentOutput, BoxError> {
         let caller = ctx.caller();
         let now_ms = unix_ms();
+        let token_count = estimate_tokens(&prompt);
+        if token_count > self.max_input_tokens {
+            return Err(format!(
+                "Input too large: {} tokens (estimated), max allowed is {} tokens",
+                token_count, self.max_input_tokens
+            )
+            .into());
+        }
 
-        let counterparty_info = if let Ok(input) = serde_json::from_str::<RecallInput>(&prompt)
+        let counterparty = if let Ok(input) = serde_json::from_str::<RecallInput>(&prompt)
             && let Some(ctx) = input.context
             && let Some(counterparty) = ctx.counterparty
         {
-            self.get_or_init_counterparty(counterparty, None).await.ok()
+            Some(counterparty)
+        } else {
+            None
+        };
+
+        let counterparty_info = if let Some(counterparty) = counterparty {
+            match timeout(RECALL_CONTEXT_TIMEOUT, self.get_counterparty(&counterparty)).await {
+                Ok(Ok(info)) => Some(info),
+                Ok(Err(err)) => {
+                    log::debug!(
+                        target: "brain",
+                        counterparty;
+                        "recall counterparty profile not available: {err:?}"
+                    );
+                    None
+                }
+                Err(_) => {
+                    log::warn!(
+                        target: "brain",
+                        counterparty;
+                        "recall counterparty profile lookup timed out"
+                    );
+                    None
+                }
+            }
         } else {
             None
         };
@@ -208,7 +308,17 @@ impl Agent<AgentCtx> for RecallAgent {
             }]
         };
 
-        let primer = self.memory.describe_primer().await.unwrap_or_default();
+        let primer = match timeout(RECALL_CONTEXT_TIMEOUT, self.memory.describe_primer()).await {
+            Ok(Ok(primer)) => primer,
+            Ok(Err(err)) => {
+                log::debug!(target: "brain", "recall primer not available: {err:?}");
+                Json::default()
+            }
+            Err(_) => {
+                log::warn!(target: "brain", "recall primer lookup timed out");
+                Json::default()
+            }
+        };
         let mut conversation = Conversation {
             user: *caller,
             messages: vec![serde_json::json!(Message {

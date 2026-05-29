@@ -15,12 +15,13 @@ use anda_engine::{
     engine::Engine,
     extension::note::NoteTool,
     management::Management,
-    memory::{Conversation, Conversations, MemoryManagement, MemoryReadonly, MemoryTool},
+    memory::{Conversation, Conversations, MemoryManagement, MemoryTool},
     model::{ModelConfig as EngineModelConfig, Models, reqwest},
     rfc3339_datetime_now, unix_ms,
 };
 use anda_kip::{
-    KipError, META_SELF_NAME, PERSON_SELF_KIP, PERSON_SYSTEM_KIP, PERSON_TYPE, parse_kml,
+    KipError, KipErrorCode, META_SELF_NAME, PERSON_SELF_KIP, PERSON_SYSTEM_KIP, PERSON_TYPE,
+    parse_kml,
 };
 use ic_auth_types::ByteBufB64;
 use ic_cose_types::cose::{
@@ -37,11 +38,17 @@ use std::{
     },
     time::Duration,
 };
-use tokio::sync::{OnceCell, RwLock};
+use tokio::{
+    sync::{OnceCell, RwLock},
+    time::timeout,
+};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    agents::{BrainHook, FormationAgent, MaintenanceAgent, RecallAgent, SELF_USER_ID},
+    agents::{
+        BrainHook, FormationAgent, MaintenanceAgent, READONLY_KIP_TIMEOUT, RecallAgent,
+        SELF_USER_ID, TimedMemoryReadonly,
+    },
     payload::StringOr,
     types::{
         AddSpaceTokenInput, CWToken, FormationInput, FormationStatus, MaintenanceInput,
@@ -289,7 +296,7 @@ impl AppState {
 
     /// Starts background maintenance tasks:
     /// - Flushes active space databases every 5 minutes.
-    /// - Evicts spaces idle for over 20 minutes.
+    /// - Evicts spaces idle for over 9 minutes.
     pub async fn start_background_tasks(&self, cancel_token: CancellationToken) {
         let flush_interval = Duration::from_secs(5 * 60);
         let idle_timeout_ms: u64 = 9 * 60 * 1000;
@@ -297,12 +304,15 @@ impl AppState {
         loop {
             tokio::select! {
                 _ = cancel_token.cancelled() => {
-                    // Flush all spaces before shutting down
-                    let spaces = self.spaces.read().await;
-                    for (id, entry) in spaces.iter() {
+                    // Flush all spaces before shutting down.
+                    let entries: Vec<(String, Arc<SpaceEntry>)> = {
+                        let spaces = self.spaces.read().await;
+                        spaces.iter().map(|(id, entry)| (id.clone(), entry.clone())).collect()
+                    };
+                    for (id, entry) in entries {
                         if let Some(space) = entry.cell.get()
                             && let Err(err) = space.db.close().await {
-                                log::error!(target: "brain", space_id = id; "flush on shutdown failed: {err:?}");
+                                log::error!(target: "brain", space_id = id; "close on shutdown failed: {err:?}");
                             }
                     }
                     return;
@@ -323,18 +333,14 @@ impl AppState {
                     continue;
                 };
 
-                if !space.pinned
-                    && now.saturating_sub(entry.last_access_ms()) > idle_timeout_ms
-                    && !space.is_processing()
+                if self
+                    .try_remove_idle_space(id, entry, now, idle_timeout_ms)
+                    .await
                 {
-                    {
-                        self.spaces.write().await.remove(id);
-                    }
-                    if let Err(err) = space.db.close().await {
+                    if let Err(err) = space.flush().await {
                         log::error!(target: "brain", space_id = id; "flush before eviction failed: {err:?}");
-                    } else {
-                        log::warn!(target: "brain", space_id = id; "space evicted due to inactivity");
                     }
+                    log::warn!(target: "brain", space_id = id; "space evicted due to inactivity");
                 } else {
                     // Periodic flush for active spaces
                     if let Err(err) = space.flush().await {
@@ -344,6 +350,39 @@ impl AppState {
             }
         }
     }
+
+    async fn try_remove_idle_space(
+        &self,
+        id: &str,
+        entry: &Arc<SpaceEntry>,
+        now_ms: u64,
+        idle_timeout_ms: u64,
+    ) -> bool {
+        let mut spaces = self.spaces.write().await;
+        let Some(current_entry) = spaces.get(id) else {
+            return false;
+        };
+        if !Arc::ptr_eq(current_entry, entry) {
+            return false;
+        }
+
+        let Some(space) = entry.cell.get() else {
+            return false;
+        };
+        let is_idle = now_ms.saturating_sub(entry.last_access_ms()) > idle_timeout_ms;
+        if space.pinned || !is_idle || space.is_processing() {
+            return false;
+        }
+
+        // Map + background snapshot are the only expected SpaceEntry refs here;
+        // OnceCell is the only expected Space ref. Anything more means a request
+        // has recently loaded or is still using this space, so eviction waits.
+        if Arc::strong_count(entry) > 2 || Arc::strong_count(space) > 1 {
+            return false;
+        }
+
+        spaces.remove(id).is_some()
+    }
 }
 
 pub struct Space {
@@ -351,9 +390,9 @@ pub struct Space {
     engine: Engine,
     http_client: reqwest::Client,
     models: Arc<Models>,
-    formation: Arc<FormationAgent>,
     maintenance: Arc<MaintenanceAgent>,
     pinned: bool,
+    pub formation: Arc<FormationAgent>,
     pub recall: Arc<RecallAgent>,
     pub db: Arc<AndaDB>,
     pub memory: Arc<MemoryManagement>,
@@ -627,10 +666,6 @@ impl Space {
                 },
             )
             .await?;
-
-        self.maintenance
-            .set_processed_at(input.scope, input.formation_id);
-
         Ok(rt)
     }
 
@@ -653,8 +688,21 @@ impl Space {
         mut req: anda_kip::Request,
     ) -> Result<anda_kip::Response, BoxError> {
         req.readonly = true;
-        let (_, res) = req.execute(self.memory.nexus.as_ref()).await;
-        Ok(res)
+        match timeout(
+            READONLY_KIP_TIMEOUT,
+            req.execute(self.memory.nexus.as_ref()),
+        )
+        .await
+        {
+            Ok((_, res)) => Ok(res),
+            Err(_) => Ok(anda_kip::Response::err(KipError::new(
+                KipErrorCode::ExecutionTimeout,
+                format!(
+                    "read-only KIP execution timed out after {} seconds; memory is busy, retry later",
+                    READONLY_KIP_TIMEOUT.as_secs()
+                ),
+            ))),
+        }
     }
 
     pub async fn get_conversation(
@@ -882,7 +930,7 @@ impl Space {
         // create a new models instance for each space to allow per-space customization in the future (e.g., different model providers or credentials)
         let models = Arc::new(Models::from_clone(models.as_ref()));
         let memory = Arc::new(memory);
-        let memory_r = MemoryReadonly::new(memory.clone());
+        let memory_r = TimedMemoryReadonly::new(memory.clone());
         let memory_tool = MemoryTool::new(memory.clone());
         let note_tool = NoteTool::new();
 
@@ -986,6 +1034,12 @@ impl Hooks {
 
 #[async_trait::async_trait]
 impl BrainHook for Hooks {
+    fn is_maintenance_processing(&self) -> bool {
+        self.space()
+            .map(|space| space.maintenance.is_processing())
+            .unwrap_or(false)
+    }
+
     async fn on_conversation_end(&self, agent_name: &str, conversation: &Conversation) {
         match agent_name {
             "recall_memory" => {

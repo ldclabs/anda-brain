@@ -21,7 +21,7 @@ use std::{
 };
 
 use super::{BrainHook, SELF_USER_ID};
-use crate::types::{MaintenanceAt, MaintenanceScope};
+use crate::types::{MaintenanceAt, MaintenanceInput, MaintenanceScope};
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/BrainMaintenance.md");
 
@@ -100,10 +100,16 @@ impl MaintenanceAgent {
         rt
     }
 
-    pub fn set_processed_at(&self, scope: MaintenanceScope, formation_id: DocumentId) {
+    pub async fn set_processed_at(
+        &self,
+        scope: MaintenanceScope,
+        formation_id: DocumentId,
+    ) -> Result<(), BoxError> {
         self.conversations
             .conversations
-            .set_extension_from(scope.to_string(), formation_id);
+            .save_extension_from(scope.to_string(), &formation_id)
+            .await?;
+        Ok(())
     }
 }
 
@@ -139,9 +145,11 @@ impl Agent<AgentCtx> for MaintenanceAgent {
                 ..Default::default()
             });
         }
+        let guard = ProcessingGuard(self.processing.clone());
 
         let caller = ctx.caller();
         let now_ms = unix_ms();
+        let maintenance_input = serde_json::from_str::<MaintenanceInput>(&prompt).ok();
 
         let mut conversation = Conversation {
             user: *caller,
@@ -167,14 +175,29 @@ impl Agent<AgentCtx> for MaintenanceAgent {
         let agent = self.clone();
         let ctx_clone = ctx.clone();
         tokio::spawn(async move {
-            // Guard resets processing to false when the task completes or panics.
-            let _guard = ProcessingGuard(agent.processing.clone());
-            agent.process_one(&ctx_clone, &mut conversation).await;
-            agent
-                .hook
-                .on_conversation_end(MaintenanceAgent::NAME, &conversation)
-                .await;
-            // Trigger formation after maintenance completes
+            {
+                // Guard resets processing to false when the task completes or panics.
+                let _guard = guard;
+                agent.process_one(&ctx_clone, &mut conversation).await;
+                if conversation.status == ConversationStatus::Completed
+                    && let Some(input) = maintenance_input
+                    && let Err(err) = agent
+                        .set_processed_at(input.scope, input.formation_id)
+                        .await
+                {
+                    log::error!(
+                        target: "brain",
+                        conversation = conversation._id,
+                        formation_id = input.formation_id;
+                        "failed to persist maintenance processed marker: {err:?}"
+                    );
+                }
+                agent
+                    .hook
+                    .on_conversation_end(MaintenanceAgent::NAME, &conversation)
+                    .await;
+            }
+            // Trigger formation after the processing flag has been released.
             agent.hook.try_start_formation().await;
         });
 
@@ -297,7 +320,7 @@ impl MaintenanceAgent {
                         let mut history = self.history.write();
                         history.push_back(doc);
                         let len = history.len();
-                        if len > 3 {
+                        if len > 2 {
                             history.drain(0..(len - 2));
                         }
                     }

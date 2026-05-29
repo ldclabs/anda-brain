@@ -2,6 +2,25 @@
 
 All notable changes to the Anda Brain project.
 
+## [0.6.6] — 2026-05-29
+
+### Changed
+- **Formation now defers to active Maintenance.** `FormationAgent::process` and the idle-path both early-return when `BrainHook::is_maintenance_processing()` is true, letting Maintenance finish before Formation resumes.
+- **Shutdown path now explicitly flushes all open spaces.** Cancellation collects entries first, avoiding iterator-invalidation while holding the read lock.
+- **Idle eviction guard tightened.** `try_remove_idle_space` checks `Arc::strong_count` on both the `SpaceEntry` (≤2) and `Space` (≤1) before evicting, preventing races where a request is mid-flight.
+- **Space idle timeout tightened** from 20 minutes to 9 minutes for faster resource reclamation.
+
+### Added
+- **`is_maintenance_processing` hook.** New `BrainHook` trait method; `Hooks` implementation delegates to `space.maintenance.is_processing()`. Formation uses it to queue safely during Maintenance runs.
+- **`TimedMemoryReadonly` read-only wrapper.** A `Tool` implementation wrapping `MemoryReadonly` with a 15-second `READONLY_KIP_TIMEOUT`; on timeout it returns a `KipErrorCode::ExecutionTimeout` response instead of hanging.
+- **Recall read timeout.** `Space::kip_readonly` now wraps KIP execution in `tokio::time::timeout(15s)`, converting hangs into structured timeout errors.
+- **Async `MaintenanceAgent::set_processed_at`.** Switched from synchronous extension write to `save_extension_from(...).await`, matching the engine's async persistence layer.
+
+### Fixed
+- **User init routed through Formation.** `get_or_init_user` now calls `space.formation.get_or_init_counterparty()` instead of `space.memory.get_or_init_caller()`, aligning user identity with the Formation pipeline.
+- **`Space.formation` visibility.** Changed from private to `pub` so external callers can reach it without going through `memory`.
+- **Maintenance history retention.** In-memory history buffer now keeps the latest 2 entries (was 3), reducing transient memory footprint during long maintenance runs.
+
 ## [0.6.5] — 2026-05-29
 
 ### Changed

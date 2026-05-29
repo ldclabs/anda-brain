@@ -12,6 +12,7 @@ pub use recall::*;
 
 #[async_trait::async_trait]
 pub trait BrainHook: Send + Sync {
+    fn is_maintenance_processing(&self) -> bool;
     async fn on_conversation_end(&self, agent_name: &str, conversation: &Conversation);
     async fn try_start_formation(&self);
     async fn try_start_maintenance(&self, formation_id: DocumentId) -> Option<DocumentId>;

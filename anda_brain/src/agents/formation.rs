@@ -106,6 +106,12 @@ impl FormationAgent {
             )
             .into());
         }
+        if self.hook.is_maintenance_processing() {
+            return Err(
+                "MaintenanceAgent is processing, formation will resume when maintenance completes"
+                    .into(),
+            );
+        }
 
         // Find the next valid pending conversation starting from the given ID (inclusive)
         let conv = self
@@ -481,15 +487,23 @@ impl Agent<AgentCtx> for FormationAgent {
 
         let is_idle = self.processing_conversation.load(Ordering::SeqCst) == 0;
         if is_idle {
-            if let Some(prev_id) = self.get_processed()
-                && prev_id + 1 < id
-            {
-                // Resume from the last processed conversation to catch any missed ones
-                if let Some(conv) = self.find_next_submitted(prev_id).await {
-                    self.try_process(ctx, conv);
-                }
+            if self.hook.is_maintenance_processing() {
+                log::info!(
+                    target: "brain",
+                    conversation = id;
+                    "Formation queued while maintenance is processing"
+                );
             } else {
-                self.try_process(ctx, conversation);
+                if let Some(prev_id) = self.get_processed()
+                    && prev_id + 1 < id
+                {
+                    // Resume from the last processed conversation to catch any missed ones
+                    if let Some(conv) = self.find_next_submitted(prev_id).await {
+                        self.try_process(ctx, conv);
+                    }
+                } else {
+                    self.try_process(ctx, conversation);
+                }
             }
         }
 
