@@ -265,6 +265,10 @@ async fn main() -> Result<(), BoxError> {
             routing::get(get_conversation),
         )
         .route(
+            "/v1/{space_id}/conversations/{conversation_id}/delta",
+            routing::get(get_conversation_delta),
+        )
+        .route(
             "/v1/{space_id}/conversations",
             routing::get(list_conversations),
         )

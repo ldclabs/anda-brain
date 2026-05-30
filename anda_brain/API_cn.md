@@ -73,8 +73,8 @@ export interface MaintenanceParameters {
 
 export interface MaintenanceInput {
   trigger?: 'scheduled' | 'threshold' | 'on_demand';
-  scope?: 'full' | 'quick';
-  timestamp: string; // ISO 8601
+  scope?: 'full' | 'quick' | 'daydream'; // 默认 'daydream'
+  timestamp?: string; // ISO 8601
   parameters?: MaintenanceParameters;
 }
 
@@ -315,7 +315,7 @@ export interface KipResponse<T> {
 
 - 作用：触发维护（睡眠/整理）
 - 鉴权：SpaceToken/CWT `write`
-- 请求体：`MaintenanceInput`（Markdown 模式下也允许原始字符串）
+- 请求体：`MaintenanceInput`
 - 响应：`RpcResponse<AgentOutput>`
 
 ### POST `/v1/{space_id}/execute_kip_readonly`

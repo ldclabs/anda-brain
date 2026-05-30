@@ -24,6 +24,41 @@ pub enum ContentType {
     Markdown(bool), // 是否明确为 markdown，默认为 false
 }
 
+/// Request/response format pair derived from HTTP content negotiation headers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PayloadFormat {
+    request: ContentType,
+    response: ContentType,
+}
+
+impl PayloadFormat {
+    pub fn from_headers(headers: &HeaderMap) -> Self {
+        Self {
+            request: ContentType::from_header(headers),
+            response: ContentType::from_accept(headers),
+        }
+    }
+
+    pub fn request_type(&self) -> ContentType {
+        self.request
+    }
+
+    pub fn response_type(&self) -> ContentType {
+        self.response
+    }
+
+    pub fn parse_body<T>(&self, body: &[u8]) -> Result<StringOr<T>, RpcError>
+    where
+        T: DeserializeOwned,
+    {
+        self.request.parse_body(body)
+    }
+
+    pub fn response<T: Serialize>(&self, data: T) -> AppResponse<T> {
+        self.response.response(data)
+    }
+}
+
 /// A helper type that can represent either a raw string or a parsed value.
 #[derive(Debug)]
 pub enum StringOr<T> {
@@ -57,12 +92,13 @@ where
 }
 
 impl ContentType {
-    /// Detect content type from Content-Type header, falling back to Accept header.
+    /// Detect request content type from Content-Type header.
     pub fn from_header(headers: &HeaderMap) -> Self {
-        headers
+        match headers
             .get(header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
-            .map(|ct| {
+        {
+            Some(ct) => {
                 if ct.contains("application/cbor") {
                     ContentType::Cbor
                 } else if ct.contains("application/json") {
@@ -72,8 +108,9 @@ impl ContentType {
                 } else {
                     ContentType::Markdown(false)
                 }
-            })
-            .unwrap_or_else(|| Self::from_accept(headers))
+            }
+            None => ContentType::Json,
+        }
     }
 
     /// Detect preferred response format from Accept header.
@@ -89,10 +126,10 @@ impl ContentType {
                 } else if accept.contains("text/markdown") {
                     ContentType::Markdown(true)
                 } else {
-                    ContentType::Markdown(false)
+                    ContentType::Json
                 }
             })
-            .unwrap_or(ContentType::Markdown(false))
+            .unwrap_or(ContentType::Json)
     }
 
     /// Get the corresponding HTTP Content-Type header value.
@@ -136,9 +173,8 @@ impl ContentType {
 
 /// Extracts the preferred response format from the `Accept` header.
 ///
-/// Defaults to JSON if no Accept header is present or if the
-/// Accept header does not contain `application/cbor`.
-pub struct Accept(pub ContentType, pub bool);
+/// Defaults to JSON if no supported `Accept` value is present.
+pub struct Accept(pub PayloadFormat, pub bool);
 
 fn prefers_chinese(accept_language: &str) -> bool {
     let lang = accept_language.to_lowercase();
@@ -165,7 +201,7 @@ impl<S: Send + Sync> axum::extract::FromRequestParts<S> for Accept {
             .and_then(|v| v.to_str().ok())
             .map(prefers_chinese)
             .unwrap_or(false);
-        Ok(Accept(ContentType::from_header(&parts.headers), is_cn))
+        Ok(Accept(PayloadFormat::from_headers(&parts.headers), is_cn))
     }
 }
 
@@ -371,7 +407,9 @@ impl<T: Serialize> IntoResponse for AppResponse<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Accept, AppError, ContentType, HeaderVals, StringOr, prefers_chinese};
+    use super::{
+        Accept, AppError, ContentType, HeaderVals, PayloadFormat, StringOr, prefers_chinese,
+    };
     use axum::{
         body::to_bytes,
         extract::FromRequestParts,
@@ -403,16 +441,25 @@ mod tests {
     }
 
     #[test]
+    fn payload_format_splits_request_and_response_types() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::CONTENT_TYPE, "application/json".parse().unwrap());
+        headers.insert(header::ACCEPT, "application/cbor".parse().unwrap());
+
+        let format = PayloadFormat::from_headers(&headers);
+        assert_eq!(format.request_type(), ContentType::Json);
+        assert_eq!(format.response_type(), ContentType::Cbor);
+    }
+
+    #[test]
     fn content_type_from_accept_and_default() {
         let mut headers = HeaderMap::new();
         headers.insert(header::ACCEPT, "application/json".parse().unwrap());
         assert_eq!(ContentType::from_accept(&headers), ContentType::Json);
 
         let headers = HeaderMap::new();
-        assert_eq!(
-            ContentType::from_accept(&headers),
-            ContentType::Markdown(false)
-        );
+        assert_eq!(ContentType::from_header(&headers), ContentType::Json);
+        assert_eq!(ContentType::from_accept(&headers), ContentType::Json);
     }
 
     #[test]
@@ -513,6 +560,7 @@ mod tests {
     async fn accept_and_header_vals_extractors_work() {
         let req = Request::builder()
             .header(header::CONTENT_TYPE, "application/json")
+            .header(header::ACCEPT, "application/cbor")
             .header(header::ACCEPT_LANGUAGE, "zh-CN,en;q=0.8")
             .header(header::AUTHORIZATION, "Bearer secret-token")
             .body(())
@@ -520,7 +568,8 @@ mod tests {
         let (mut parts, _) = req.into_parts();
 
         let accept = Accept::from_request_parts(&mut parts, &()).await.unwrap();
-        assert_eq!(accept.0, ContentType::Json);
+        assert_eq!(accept.0.request_type(), ContentType::Json);
+        assert_eq!(accept.0.response_type(), ContentType::Cbor);
         assert!(accept.1);
 
         let HeaderVals(bearer, sharding) = HeaderVals::from_request_parts(&mut parts, &())
@@ -531,6 +580,7 @@ mod tests {
 
         let req = Request::builder()
             .header(header::CONTENT_TYPE, "application/cbor")
+            .header(header::ACCEPT, "text/markdown")
             .header(header::ACCEPT_LANGUAGE, "en-US,en;q=0.9")
             .header(header::AUTHORIZATION, "another-token")
             .header("shard-id", "42")
@@ -540,7 +590,8 @@ mod tests {
         let (mut parts, _) = req.into_parts();
 
         let accept = Accept::from_request_parts(&mut parts, &()).await.unwrap();
-        assert_eq!(accept.0, ContentType::Cbor);
+        assert_eq!(accept.0.request_type(), ContentType::Cbor);
+        assert_eq!(accept.0.response_type(), ContentType::Markdown(true));
         assert!(!accept.1);
 
         let HeaderVals(bearer, sharding) = HeaderVals::from_request_parts(&mut parts, &())

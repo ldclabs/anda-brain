@@ -57,7 +57,7 @@ pub async fn get_information(State(app): State<AppState>) -> impl IntoResponse {
 }
 
 pub async fn get_website(Accept(ct, is_cn): Accept) -> Response {
-    match ct {
+    match ct.response_type() {
         ContentType::Markdown(true) => {
             if is_cn {
                 ct.response(WEBSITE_CN_MARKDOWN).into_response()
@@ -189,7 +189,7 @@ pub async fn post_formation(
         .ingest(SELF_USER_ID, input)
         .await
         .map_err(AppError::bad_request)?;
-    match ct {
+    match ct.response_type() {
         ContentType::Markdown(_) => Ok(ct.response(rt.content).into_response()),
         _ => Ok(ct.response(RpcResponse::success(rt)).into_response()),
     }
@@ -310,7 +310,7 @@ pub async fn execute_kip_readonly(
 
     let now_ms = unix_ms();
     let t = app
-        .check_auth_if(&token, &space_id, TokenScope::Write, now_ms)
+        .check_auth_if(&token, &space_id, TokenScope::Read, now_ms)
         .map_err(|_| AppError::unauthorized())?;
 
     let space = app
@@ -318,10 +318,10 @@ pub async fn execute_kip_readonly(
         .await
         .map_err(AppError::bad_request)?;
 
-    if t.is_none() {
+    if !space.is_public() && t.is_none() {
         // 如果没有验证 CWToken，则验证 SpaceToken
         space
-            .verify_space_token(token, TokenScope::Write, now_ms)
+            .verify_space_token(token, TokenScope::Read, now_ms)
             .map_err(|_| AppError::unauthorized())?;
     }
 

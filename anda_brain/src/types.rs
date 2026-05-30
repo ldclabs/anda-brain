@@ -206,7 +206,10 @@ impl SpaceTier {
 
     // tier 0 (free) allows 100 nodes, tier 1 allows 1k, etc.
     pub fn allow_nodes(&self) -> u64 {
-        10u64.pow(self.tier + 2)
+        self.tier
+            .checked_add(2)
+            .and_then(|exponent| 10u64.checked_pow(exponent))
+            .unwrap_or(u64::MAX)
     }
 }
 
@@ -512,6 +515,7 @@ pub struct MaintenanceInput {
     pub trigger: String,
 
     /// `"full"` (complete sleep cycle) | `"quick"` (lightweight check only) | `"daydream"` (idle-time salience scoring and micro-consolidation).
+    #[serde(default)]
     pub scope: MaintenanceScope,
 
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -556,7 +560,10 @@ pub struct GetOrInitUserInput {
 
 #[cfg(test)]
 mod tests {
-    use super::{FormationInput, InputContext, RecallInput, SpaceToken, TokenScope};
+    use super::{
+        FormationInput, InputContext, MaintenanceInput, MaintenanceScope, RecallInput, SpaceTier,
+        SpaceToken, TokenScope,
+    };
     use std::str::FromStr;
 
     #[test]
@@ -636,6 +643,26 @@ mod tests {
     }
 
     #[test]
+    fn space_tier_allow_nodes_saturates_on_large_tiers() {
+        assert_eq!(
+            SpaceTier {
+                tier: 0,
+                updated_at: 0
+            }
+            .allow_nodes(),
+            100
+        );
+        assert_eq!(
+            SpaceTier {
+                tier: u32::MAX,
+                updated_at: 0
+            }
+            .allow_nodes(),
+            u64::MAX
+        );
+    }
+
+    #[test]
     fn input_context_deserializes_object_and_legacy_user_alias() {
         let context: InputContext =
             serde_json::from_str(r#"{"user":"alice","agent":"bot","topic":"settings"}"#).unwrap();
@@ -668,5 +695,13 @@ mod tests {
 
         assert_eq!(context.counterparty.as_deref(), Some("carol"));
         assert_eq!(context.agent.as_deref(), Some("agent-1"));
+    }
+
+    #[test]
+    fn maintenance_input_defaults_trigger_and_scope() {
+        let input: MaintenanceInput = serde_json::from_str(r#"{}"#).unwrap();
+
+        assert_eq!(input.trigger, "on_demand");
+        assert_eq!(input.scope, MaintenanceScope::Daydream);
     }
 }

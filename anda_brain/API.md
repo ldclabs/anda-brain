@@ -73,8 +73,8 @@ export interface MaintenanceParameters {
 
 export interface MaintenanceInput {
   trigger?: 'scheduled' | 'threshold' | 'on_demand';
-  scope?: 'full' | 'quick';
-  timestamp: string; // ISO 8601
+  scope?: 'full' | 'quick' | 'daydream'; // defaults to 'daydream'
+  timestamp?: string; // ISO 8601
   parameters?: MaintenanceParameters;
 }
 
@@ -315,7 +315,7 @@ export interface KipResponse<T> {
 
 - Purpose: Trigger maintenance (sleep/consolidation)
 - Auth: SpaceToken/CWT `write`
-- Request body: `MaintenanceInput` (raw string is also accepted in Markdown mode)
+- Request body: `MaintenanceInput`
 - Response: `RpcResponse<AgentOutput>`
 
 ### POST `/v1/{space_id}/execute_kip_readonly`

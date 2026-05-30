@@ -62,13 +62,15 @@ Supporting endpoints:
 | `GET` | `/SKILL.md` | This skill description | — |
 | `GET` | `/v1/{space_id}/info` | Space status and statistics | `read` (CWT or space token) |
 | `GET` | `/v1/{space_id}/conversations/{conversation_id}` | Get one conversation detail | `read` (CWT or space token) |
+| `GET` | `/v1/{space_id}/conversations/{conversation_id}/delta` | Get incremental conversation updates | `read` (CWT or space token) |
 | `GET` | `/v1/{space_id}/conversations` | List conversations (cursor pagination) | `read` (CWT or space token) |
 | `GET` | `/v1/{space_id}/management/space_tokens` | List space tokens | `read` (CWT) |
 | `POST` | `/v1/{space_id}/management/add_space_token` | Add a space token | `write` (CWT) |
 | `POST` | `/v1/{space_id}/management/revoke_space_token` | Revoke a space token | `write` (CWT) |
 | `PATCH` | `/v1/{space_id}/management/update_space` | Update space information (name, description, public/private) | `write` (CWT) |
 | `PATCH` | `/v1/{space_id}/management/restart_formation` | Restart formation for a conversation (re-encode with updated model/config) | `write` (CWT) |
-| `PATCH` | `/v1/{space_id}/management/update_byok` | Update BYOK configuration for the space | `write` (CWT) |
+| `GET` | `/v1/{space_id}/management/space_byok` | Get BYOK configuration for the space | `read` (CWT) |
+| `PATCH` | `/v1/{space_id}/management/space_byok` | Update BYOK configuration for the space | `write` (CWT) |
 | `POST` | `/admin/{space_id}/update_space_tier` | Update a space tier | manager (CWT) |
 | `POST` | `/admin/create_space` | Create a new memory space | manager (CWT) |
 > Auth scopes in tables apply when authentication is enabled (`ED25519_PUBKEYS` is set).

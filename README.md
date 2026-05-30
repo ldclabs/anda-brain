@@ -169,6 +169,7 @@ Anda Brain is designed to be the "memory engine" for the next generation of AI a
 ### 1. Personal Agents: A Powerful Cloud-Based Graph Brain
 
 Open-source local agents (like **OpenClaw**) have proven the massive demand for personal AI assistants. However, relying purely on local Markdown files and SQLite limits the agent's ability to process highly complex, interconnected, lifelong memories, while also generating high Token costs.
+For a concrete example, [anda-bot](https://github.com/ldclabs/anda-bot) is an intelligent agent built on top of Anda Brain, using Brain as its long-term memory and cognitive backbone.
 *   **Brain Upgrade:** Seamlessly insert Brain into agent frameworks via customized ContextEngines. It acts as a robust, structured graph memory backend.
 *   **The Result:** The agent truly "understands" the user's life graph—tracking relationships, shifting preferences, project histories, and episodic events across years—without bloating the context window.
 
