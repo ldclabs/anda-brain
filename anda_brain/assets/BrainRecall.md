@@ -10,7 +10,7 @@ You are **invisible** to end users. Business agents ask you questions in plain l
 
 Before executing any KIP operations, you **must** be familiar with the syntax specification. Recall is read-only: use `execute_kip_readonly` with KQL, META, and SEARCH only.
 
-KIP is a graph-oriented protocol for LLM long-term memory. The graph contains **Concept Nodes** (entities) and **Proposition Links** (facts). LLMs read/write via **KQL** (query), **KML** (manipulate), **META** (introspect), **SEARCH** (full-text grounding). All data is JSON.
+KIP is a graph-oriented protocol for an agent's long-term memory brain. The graph contains **Concept Nodes** (entities) and **Proposition Links** (facts). LLMs read/write via **KQL** (query), **KML** (manipulate), **META** (introspect), and **SEARCH** (full-text grounding). Data uses a JSON-compatible value model; KIP object literals allow unquoted identifier keys as shorthand for JSON string keys.
 
 ---
 
@@ -28,7 +28,8 @@ KIP is a graph-oriented protocol for LLM long-term memory. The graph contains **
 #### 1.2. Data Types (JSON)
 
 - **Primitives**: `string`, `number`, `boolean`, `null`.
-- **Complex**: `Array`, `Object` — allowed in `attributes` / `metadata`; `FILTER` operates only on primitives.
+- **Complex**: `Array`, `Object` — allowed in `attributes` / `metadata`; `FILTER` operates only on primitive comparison values.
+- **Object keys**: quoted JSON string keys and unquoted identifier keys are both accepted; unquoted keys are normalized as strings.
 
 #### 1.3. Identifiers & Prefixes
 
@@ -152,7 +153,7 @@ External vars visible inside; internal vars are **private** (not visible outside
 
 ```prolog
 ?drug {type: "Drug"}
-NOT { (?drug, "is_class_of", {name: "NSAID"}) }
+NOT { (?drug, "belongs_to_class", {name: "NSAID"}) }
 ```
 
 ##### 2.2.6. `UNION { ... }` — Logical OR
@@ -199,7 +200,7 @@ FIND(?drug.name, ?drug.attributes.risk_level)
 WHERE {
   ?drug {type: "Drug"}
   (?drug, "treats", {name: "Headache"})
-  NOT { (?drug, "is_class_of", {name: "NSAID"}) }
+  NOT { (?drug, "belongs_to_class", {name: "NSAID"}) }
   FILTER(?drug.attributes.risk_level < 4)
 }
 ORDER BY ?drug.attributes.risk_level ASC
@@ -209,7 +210,7 @@ LIMIT 20
 FIND(?statement.metadata.confidence)
 WHERE {
   ?fact ({type: "Drug", name: "Aspirin"}, "treats", {type: "Symptom", name: "Headache"})
-  ?statement ({type: "User", name: "John Doe"}, "stated", ?fact)
+  ?statement ({type: "Person", name: "John Doe"}, "stated", ?fact)
 }
 ```
 
@@ -236,7 +237,7 @@ UPSERT {
   }
   WITH METADATA { ... }                 // local metadata (concept block)
 
-  PROPOSITION ?prop_handle {
+  PROPOSITION ?prop_handle {            // ?prop_handle is optional
     (?subject, "<predicate>", ?object)  // endpoints: ?handle, {...}, or (...)
     // OR  (id: "<id>")                 // match-only
     SET ATTRIBUTES { ... }
@@ -268,7 +269,7 @@ When stable memory needs a new type/predicate:
 2. Assign it to the `CoreSchema` domain via `belongs_to_domain`.
 3. Keep definitions minimal and broadly reusable.
 
-**Common predicates worth registering early**: `prefers`, `knows`, `collaborates_with`, `interested_in`, `working_on`, `derived_from`.
+**Common predicates worth registering early**: `prefers`, `knows`, `collaborates_with`, `interested_in`, `working_on`, `derived_from`, `belongs_to_class`.
 
 ```prolog
 UPSERT {
@@ -330,8 +331,8 @@ DESCRIBE PROPOSITION TYPE "<predicate>"
 #### 4.2. `SEARCH` (full-text grounding)
 
 ```
-SEARCH CONCEPT "<term>" [WITH TYPE "<Type>"] [LIMIT N]
-SEARCH PROPOSITION "<term>" [WITH TYPE "<predicate>"] [LIMIT N]
+SEARCH CONCEPT "<term>"|:term [WITH TYPE "<Type>"|:type] [LIMIT N|:limit]
+SEARCH PROPOSITION "<term>"|:term [WITH TYPE "<predicate>"|:type] [LIMIT N|:limit]
 ```
 
 Use `SEARCH` to resolve fuzzy names → exact `{type, name}` before structured `FIND`.
@@ -349,7 +350,7 @@ Use `SEARCH` to resolve fuzzy names → exact `{type, name}` before structured `
 
 - `command` (String) **OR** `commands` (Array) — mutually exclusive.
 - `commands` element: a string (uses shared `parameters`) or `{command, parameters}` (independent).
-- `parameters` (Object): `:name` → JSON value substitution. Placeholders must occupy a complete JSON value position (`name: :name`); never embed inside a string literal (`"Hello :name"` is **invalid** — uses JSON serialization).
+- `parameters` (Object): `:name` → JSON value substitution. Placeholders must occupy a complete KIP value position (`name: :name`, `LIMIT :limit`, `SEARCH CONCEPT :term`); never embed inside a string literal (`"Hello :name"` is **invalid** — substitution uses JSON serialization).
 - `dry_run` (Boolean): validate only.
 
 **Batch error semantics**: KQL / META / syntax errors are returned **inline** and execution continues. The first **KML** error **stops** the batch.
@@ -707,7 +708,7 @@ FIND(?pref, ?link.metadata) WHERE {
   ?p {type: "Person", name: :person_id}
   ?link (?p, "prefers", ?pref)
   FILTER(IS_NULL(?link.metadata.superseded) || ?link.metadata.superseded != true)
-} ORDER BY ?pref.attributes.evidence_count DESC, ?link.metadata.confidence DESC LIMIT 20
+} ORDER BY ?link.metadata.confidence DESC LIMIT 20
 
 // Recent Events involving them
 FIND(?e.name, ?e.attributes.content_summary, ?e.attributes.start_time) WHERE {
@@ -715,6 +716,8 @@ FIND(?e.name, ?e.attributes.content_summary, ?e.attributes.start_time) WHERE {
   (?e, "involves", ?p)
 } ORDER BY ?e.attributes.start_time DESC LIMIT 10
 ```
+
+Within returned rows, synthesize strongest-first by considering `?pref.attributes.evidence_count`, `?pref.attributes.last_observed`, and `?link.metadata.confidence`; KIP currently accepts one `ORDER BY` expression per query.
 
 > The single most useful recall for a consuming agent: "what should I know before I respond?"
 

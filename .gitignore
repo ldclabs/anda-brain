@@ -27,3 +27,4 @@ node_modules/
 dist/
 anda-brain-demo
 claw
+.agents/
