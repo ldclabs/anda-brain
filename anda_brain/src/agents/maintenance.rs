@@ -20,7 +20,7 @@ use std::{
     },
 };
 
-use super::{BrainHook, SELF_USER_ID};
+use super::{BrainHook, SELF_USER_ID, push_completed_history};
 use crate::types::{MaintenanceAt, MaintenanceInput, MaintenanceScope};
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/BrainMaintenance.md");
@@ -316,13 +316,7 @@ impl MaintenanceAgent {
                     if let Some(failed_reason) = res.failed_reason {
                         conversation.failed_reason = Some(failed_reason);
                     } else {
-                        let doc: Document = conversation.clone().into();
-                        let mut history = self.history.write();
-                        history.push_back(doc);
-                        let len = history.len();
-                        if len > 2 {
-                            history.drain(0..(len - 2));
-                        }
+                        push_completed_history(&self.history, conversation, 2);
                     }
 
                     match conversation.to_changes() {

@@ -20,7 +20,7 @@ use std::{
     },
 };
 
-use super::BrainHook;
+use super::{BrainHook, push_completed_history};
 use crate::types::FormationInput;
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/BrainFormation.md");
@@ -384,13 +384,7 @@ impl FormationAgent {
                     if let Some(failed_reason) = res.failed_reason {
                         conversation.failed_reason = Some(failed_reason);
                     } else {
-                        let doc: Document = conversation.clone().into();
-                        let mut history = self.history.write();
-                        history.push_back(doc);
-                        let len = history.len();
-                        if len > 2 {
-                            history.drain(0..(len - 2));
-                        }
+                        push_completed_history(&self.history, conversation, 2);
                     }
 
                     // to_changes 失败不中断处理循环

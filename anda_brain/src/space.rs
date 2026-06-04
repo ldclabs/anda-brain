@@ -337,8 +337,8 @@ impl AppState {
                     .try_remove_idle_space(id, entry, now, idle_timeout_ms)
                     .await
                 {
-                    if let Err(err) = space.flush().await {
-                        log::error!(target: "brain", space_id = id; "flush before eviction failed: {err:?}");
+                    if let Err(err) = space.close().await {
+                        log::error!(target: "brain", space_id = id; "close before eviction failed: {err:?}");
                     }
                     log::warn!(target: "brain", space_id = id; "space evicted due to inactivity");
                 } else {
@@ -769,6 +769,11 @@ impl Space {
         Ok(())
     }
 
+    async fn close(&self) -> Result<(), BoxError> {
+        self.db.close().await?;
+        Ok(())
+    }
+
     async fn create(
         object_store: Arc<dyn ObjectStore>,
         db_config: DBConfig,
@@ -794,7 +799,7 @@ impl Space {
 
         let nexus = Arc::new(nexus);
         let memory = MemoryManagement::connect(db.clone(), nexus.clone()).await?;
-        Ok(SpaceInfo {
+        let info = SpaceInfo {
             id: id.clone(),
             name: None,
             description: None,
@@ -806,7 +811,9 @@ impl Space {
             public: false,
             tier,
             ..Default::default()
-        })
+        };
+        db.close().await?;
+        Ok(info)
     }
 
     async fn connect(
@@ -1154,8 +1161,13 @@ async fn init_nexus_kip(nexus: &CognitiveNexus) -> Result<(), KipError> {
 
 #[cfg(test)]
 mod tests {
-    use super::SpaceEntry;
+    use super::{Space, SpaceEntry};
+    use crate::types::SpaceTier;
+    use anda_core::Principal;
+    use anda_db::{database::DBConfig, storage::StorageConfig};
     use anda_engine::unix_ms;
+    use object_store::memory::InMemory;
+    use std::sync::Arc;
     use std::sync::atomic::Ordering;
 
     #[test]
@@ -1178,5 +1190,43 @@ mod tests {
         entry.touch();
 
         assert!(entry.last_access_ms() >= before_touch);
+    }
+
+    #[tokio::test]
+    async fn create_space_persists_metadata_before_returning() {
+        let object_store = Arc::new(InMemory::new());
+        let db_config = DBConfig {
+            name: "create_space_persists_metadata".to_string(),
+            description: "test database".to_string(),
+            storage: StorageConfig::default(),
+            lock: None,
+        };
+        let creator = Principal::from_slice(&[1]);
+        let owner = Principal::from_slice(&[2]);
+
+        let info = Space::create(
+            object_store.clone(),
+            db_config.clone(),
+            creator,
+            owner,
+            1,
+            123,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(info.owner, owner.to_string());
+        assert_eq!(info.tier.tier, 1);
+
+        let db = anda_db::database::AndaDB::open(object_store, db_config)
+            .await
+            .unwrap();
+        let persisted_owner: String = db.get_extension_as("owner").unwrap();
+        let persisted_tier: SpaceTier = db.get_extension_as("tier").unwrap();
+
+        assert_eq!(persisted_owner, owner.to_string());
+        assert_eq!(persisted_tier.tier, 1);
+
+        db.close().await.unwrap();
     }
 }
