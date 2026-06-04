@@ -561,9 +561,11 @@ pub struct GetOrInitUserInput {
 #[cfg(test)]
 mod tests {
     use super::{
-        FormationInput, InputContext, MaintenanceInput, MaintenanceScope, RecallInput, SpaceTier,
-        SpaceToken, TokenScope,
+        FormationInput, InputContext, MaintenanceInput, MaintenanceScope, ModelConfig, RecallInput,
+        SpaceTier, SpaceToken, TokenScope,
     };
+    use anda_engine::model::ModelConfig as EngineModelConfig;
+    use serde_json::json;
     use std::str::FromStr;
 
     #[test]
@@ -703,5 +705,96 @@ mod tests {
 
         assert_eq!(input.trigger, "on_demand");
         assert_eq!(input.scope, MaintenanceScope::Daydream);
+    }
+
+    #[test]
+    fn model_config_accepts_compact_aliases_and_converts_to_engine_config() {
+        let config: ModelConfig = serde_json::from_str(
+            r#"{"f":"openai","m":"gpt-test","ab":"https://api.example","ak":"secret","d":true,"l":"primary","b":true,"s":true,"cw":128,"mo":64}"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.family, "openai");
+        assert_eq!(config.model, "gpt-test");
+        assert_eq!(config.api_base, "https://api.example");
+        assert_eq!(config.api_key, "secret");
+        assert!(config.disabled);
+        assert_eq!(config.label.as_deref(), Some("primary"));
+        assert!(config.bearer_auth);
+        assert!(config.stream);
+        assert_eq!(config.context_window, 128);
+        assert_eq!(config.max_output, 64);
+
+        let engine_config: EngineModelConfig = config.into();
+        assert_eq!(engine_config.family, "openai");
+        assert_eq!(engine_config.model, "gpt-test");
+        assert_eq!(engine_config.labels, vec!["primary"]);
+        assert!(engine_config.disabled);
+        assert!(engine_config.bearer_auth);
+        assert!(engine_config.stream);
+        assert_eq!(engine_config.context_window, 128);
+        assert_eq!(engine_config.max_output, 64);
+    }
+
+    #[test]
+    fn compact_refs_serialize_with_storage_field_names() {
+        let tier = SpaceTier {
+            tier: 2,
+            updated_at: 99,
+        };
+        assert_eq!(
+            serde_json::to_value(tier.to_ref()).unwrap(),
+            json!({"t": 2, "u": 99})
+        );
+
+        let token = SpaceToken {
+            token: "runtime-token".to_string(),
+            name: "automation".to_string(),
+            scope: TokenScope::All,
+            usage: 4,
+            created_at: 10,
+            updated_at: 20,
+            expires_at: Some(30),
+        };
+        let value = serde_json::to_value(token.to_ref()).unwrap();
+
+        assert_eq!(value["n"], "automation");
+        assert_eq!(value["s"], "*");
+        assert_eq!(value["u"], 4);
+        assert_eq!(value["ca"], 10);
+        assert_eq!(value["ua"], 20);
+        assert_eq!(value["ea"], 30);
+        assert!(value.get("token").is_none());
+    }
+
+    #[test]
+    fn input_context_accepts_double_encoded_json_strings_and_nullish_values() {
+        let inner = serde_json::to_string(&json!({"user": "dana", "source": "mail"})).unwrap();
+        let double_encoded = serde_json::to_string(&inner).unwrap();
+        let input: RecallInput = serde_json::from_value(json!({
+            "query": "preferences",
+            "context": double_encoded,
+        }))
+        .unwrap();
+        let context = input.context.unwrap();
+
+        assert_eq!(context.counterparty.as_deref(), Some("dana"));
+        assert_eq!(context.source.as_deref(), Some("mail"));
+
+        let input: RecallInput = serde_json::from_str(r#"{"query":"x","context":"null"}"#).unwrap();
+        assert_eq!(input.context, Some(InputContext::default()));
+    }
+
+    #[test]
+    fn maintenance_scope_from_str_and_display_are_inverse() {
+        for (wire, scope) in [
+            ("full", MaintenanceScope::Full),
+            ("quick", MaintenanceScope::Quick),
+            ("daydream", MaintenanceScope::Daydream),
+        ] {
+            assert_eq!(MaintenanceScope::from_str(wire).unwrap(), scope);
+            assert_eq!(scope.to_string(), wire);
+        }
+        assert!(MaintenanceScope::from_str("nightly").is_err());
     }
 }

@@ -1151,3 +1151,32 @@ async fn init_nexus_kip(nexus: &CognitiveNexus) -> Result<(), KipError> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::SpaceEntry;
+    use anda_engine::unix_ms;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn space_entry_starts_uninitialized_with_recent_access_time() {
+        let before = unix_ms();
+        let entry = SpaceEntry::new();
+        let after = unix_ms();
+
+        assert!(!entry.cell.initialized());
+        assert!(entry.last_access_ms() >= before);
+        assert!(entry.last_access_ms() <= after);
+    }
+
+    #[test]
+    fn space_entry_touch_refreshes_last_access_time() {
+        let entry = SpaceEntry::new();
+        entry.last_access_ms.store(0, Ordering::Relaxed);
+        let before_touch = unix_ms();
+
+        entry.touch();
+
+        assert!(entry.last_access_ms() >= before_touch);
+    }
+}

@@ -856,3 +856,25 @@ fn markdown_to_html(md: &str) -> String {
     )
     .unwrap_or_else(|_| to_html(md))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::markdown_to_html;
+
+    #[test]
+    fn markdown_to_html_renders_gfm_tables() {
+        let html = markdown_to_html("| name | count |\n| --- | ---: |\n| alice | 7 |");
+
+        assert!(html.contains("<table>"));
+        assert!(html.contains("<td>alice</td>"));
+        assert!(html.contains("<td align=\"right\">7</td>"));
+    }
+
+    #[test]
+    fn markdown_to_html_preserves_allowed_raw_html() {
+        let html = markdown_to_html("# Title\n\n<span data-kind=\"raw\">ok</span>");
+
+        assert!(html.contains("<h1>Title</h1>"));
+        assert!(html.contains("<span data-kind=\"raw\">ok</span>"));
+    }
+}

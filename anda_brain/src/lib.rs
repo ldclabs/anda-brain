@@ -37,3 +37,42 @@ fn parse_ed25519_pubkey(input: &str) -> Option<VerifyingKey> {
     let bytes: [u8; 32] = public_key.try_into().ok()?;
     VerifyingKey::from_bytes(&bytes).ok()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::parse_ed25519_pubkeys;
+    use ic_auth_types::ByteBufB64;
+
+    fn ed25519_basepoint_bytes() -> [u8; 32] {
+        let mut bytes = [0x66; 32];
+        bytes[0] = 0x58;
+        bytes
+    }
+
+    #[test]
+    fn parse_ed25519_pubkeys_allows_empty_input() {
+        let keys = parse_ed25519_pubkeys("").unwrap();
+
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn parse_ed25519_pubkeys_accepts_raw_keys_and_trims_items() {
+        let key_bytes = ed25519_basepoint_bytes();
+        let encoded = ByteBufB64(key_bytes.to_vec()).to_string();
+        let keys = parse_ed25519_pubkeys(&format!(" {encoded} , {encoded} ")).unwrap();
+
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0].to_bytes(), key_bytes);
+        assert_eq!(keys[1].to_bytes(), key_bytes);
+    }
+
+    #[test]
+    fn parse_ed25519_pubkeys_rejects_invalid_entries() {
+        let short_key = ByteBufB64(vec![1, 2, 3]).to_string();
+
+        assert!(parse_ed25519_pubkeys("not base64").is_err());
+        assert!(parse_ed25519_pubkeys(&short_key).is_err());
+        assert!(parse_ed25519_pubkeys(" ").is_err());
+    }
+}

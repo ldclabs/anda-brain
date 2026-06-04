@@ -2,6 +2,30 @@
 
 All notable changes to the Anda Brain project.
 
+## [0.6.8] — 2026-06-04
+
+### Added
+- **Test coverage for core Brain modules.** Added unit tests across 9 modules: Formation/Maintenance `ProcessingGuard` lifecycle, Recall KIP function definition and timeout, `AnyHost` matching, ED25519 public key parsing (trim, validation, comma-separated), `markdown_to_html` GFM tables and raw-HTML preservation, `StringOr` and `HeaderVals` X-Shard extractors, `SpaceEntry` initialization and `touch`, `ModelConfig` compact alias deserialization and engine conversion, compact ref serialization, double-encoded `InputContext` JSON strings, `MaintenanceScope` `FromStr`/`Display` roundtrip.
+
+### Changed
+- **Dependencies updated.** `anda_core` 0.12.4 → 0.12.6, `anda_engine` 0.12.24 → 0.12.28, plus minor bumps (bitflags, hyper, uuid, zerocopy, etc.).
+
+## [0.6.7] — 2026-05-30
+
+### Added
+- **`PayloadFormat` struct** separating request `ContentType` detection from response serialization format. Request format now respects `Content-Type` header only; response format honors `Accept` header independently.
+- **Conversation delta endpoint.** `GET /v1/{space_id}/conversations/{conversation_id}/delta` route for incremental conversation sync.
+- **`daydream` maintenance scope.** New `MaintenanceScope::Daydream` variant for lightweight background processing.
+
+### Fixed
+- **KIP readonly auth scope corrected.** `execute_kip_readonly` was incorrectly requiring `Write` scope; changed to `Read` with `is_public` guard for space token verification.
+- **`SpaceTier::allow_nodes` overflow prevention.** Replaced unchecked `pow(2, tier-1)` with `checked_pow` saturating to `MAX`.
+- **`MaintenanceInput.timestamp` now optional.** Added `#[serde(default)]` so callers can omit the field.
+
+### Changed
+- **Default content type changed** from `Markdown(false)` to `Json` for both missing `Content-Type` and missing `Accept` headers.
+- **API docs, SKILL.md, READMEs** updated with new endpoints, `daydream` scope, and anda-bot usage example.
+
 ## [0.6.6] — 2026-05-29
 
 ### Changed

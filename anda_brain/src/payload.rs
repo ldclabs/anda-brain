@@ -638,4 +638,44 @@ mod tests {
         assert!(prefers_chinese("ZH-CN,en"));
         assert!(!prefers_chinese("EN,zh"));
     }
+
+    #[test]
+    fn string_or_display_and_value_cover_raw_and_structured_inputs() {
+        let raw: StringOr<DemoPayload> = StringOr::String("# raw".to_string());
+        assert_eq!(raw.to_string(), "# raw");
+        assert_eq!(raw.value().unwrap_err(), "# raw");
+
+        let structured = StringOr::Value(demo_payload());
+        let text = structured.to_string();
+        assert!(text.contains("\"name\": \"alice\""));
+        assert!(text.contains("\"count\": 7"));
+    }
+
+    #[tokio::test]
+    async fn header_vals_accepts_x_shard_and_defaults_invalid_values() {
+        let req = Request::builder()
+            .header(header::AUTHORIZATION, "Bearer token")
+            .header("X-Shard", "9")
+            .body(())
+            .unwrap();
+        let (mut parts, _) = req.into_parts();
+
+        let HeaderVals(token, sharding) = HeaderVals::from_request_parts(&mut parts, &())
+            .await
+            .unwrap();
+        assert_eq!(token, "token");
+        assert_eq!(sharding, 9);
+
+        let req = Request::builder()
+            .header("Shard-Id", "not-a-number")
+            .body(())
+            .unwrap();
+        let (mut parts, _) = req.into_parts();
+
+        let HeaderVals(token, sharding) = HeaderVals::from_request_parts(&mut parts, &())
+            .await
+            .unwrap();
+        assert_eq!(token, "");
+        assert_eq!(sharding, 0);
+    }
 }

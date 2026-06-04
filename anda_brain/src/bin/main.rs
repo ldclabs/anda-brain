@@ -427,3 +427,52 @@ async fn create_reuse_port_listener(addr: SocketAddr) -> Result<tokio::net::TcpL
     let listener = socket.listen(1024)?;
     Ok(listener)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{AnyHost, create_reuse_port_listener, parse_ed25519_pubkeys};
+    use ic_auth_types::ByteBufB64;
+
+    fn ed25519_basepoint_bytes() -> [u8; 32] {
+        let mut bytes = [0x66; 32];
+        bytes[0] = 0x58;
+        bytes
+    }
+
+    #[test]
+    fn any_host_matches_every_host_name() {
+        assert_eq!(AnyHost, "api.example.com");
+        assert_eq!(AnyHost, "localhost");
+        assert_eq!(AnyHost, "");
+    }
+
+    #[test]
+    fn parse_ed25519_pubkeys_accepts_comma_separated_raw_keys() {
+        let key_bytes = ed25519_basepoint_bytes();
+        let encoded = ByteBufB64(key_bytes.to_vec()).to_string();
+        let keys = parse_ed25519_pubkeys(&format!("{encoded}, {encoded}")).unwrap();
+
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0].to_bytes(), key_bytes);
+        assert_eq!(keys[1].to_bytes(), key_bytes);
+    }
+
+    #[test]
+    fn parse_ed25519_pubkeys_rejects_bad_binary_config() {
+        let short_key = ByteBufB64(vec![1, 2, 3]).to_string();
+
+        assert!(parse_ed25519_pubkeys("bad key").is_err());
+        assert!(parse_ed25519_pubkeys(&short_key).is_err());
+    }
+
+    #[tokio::test]
+    async fn create_reuse_port_listener_binds_ephemeral_port() {
+        let listener = create_reuse_port_listener("127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        assert_eq!(addr.ip().to_string(), "127.0.0.1");
+        assert_ne!(addr.port(), 0);
+    }
+}

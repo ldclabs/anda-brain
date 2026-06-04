@@ -410,3 +410,35 @@ impl Agent<AgentCtx> for RecallAgent {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{FUNCTION_DEFINITION, READONLY_KIP_TIMEOUT, RecallAgent};
+
+    #[test]
+    fn recall_function_definition_matches_agent_contract() {
+        assert_eq!(RecallAgent::NAME, "recall_memory");
+        assert_eq!(FUNCTION_DEFINITION.name, RecallAgent::NAME);
+        assert_eq!(FUNCTION_DEFINITION.strict, Some(true));
+        assert_eq!(
+            FUNCTION_DEFINITION
+                .parameters
+                .pointer("/properties/query/type")
+                .and_then(|v| v.as_str()),
+            Some("string")
+        );
+        assert_eq!(
+            FUNCTION_DEFINITION
+                .parameters
+                .pointer("/required")
+                .and_then(|v| v.as_array())
+                .map(|values| values.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>()),
+            Some(vec!["query", "context"])
+        );
+    }
+
+    #[test]
+    fn readonly_kip_timeout_stays_bounded() {
+        assert_eq!(READONLY_KIP_TIMEOUT.as_secs(), 15);
+    }
+}

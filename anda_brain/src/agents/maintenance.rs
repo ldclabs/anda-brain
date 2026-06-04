@@ -360,3 +360,29 @@ impl MaintenanceAgent {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{MaintenanceAgent, ProcessingGuard};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    #[test]
+    fn processing_guard_resets_processing_flag_on_drop() {
+        let processing = Arc::new(AtomicBool::new(true));
+
+        {
+            let _guard = ProcessingGuard(processing.clone());
+            assert!(processing.load(Ordering::SeqCst));
+        }
+
+        assert!(!processing.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn maintenance_agent_name_matches_registered_agent_name() {
+        assert_eq!(MaintenanceAgent::NAME, "maintenance_memory");
+    }
+}

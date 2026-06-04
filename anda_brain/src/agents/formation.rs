@@ -510,3 +510,29 @@ impl Agent<AgentCtx> for FormationAgent {
         Ok(res)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{FormationAgent, ProcessingGuard};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    };
+
+    #[test]
+    fn processing_guard_resets_conversation_id_on_drop() {
+        let processing = Arc::new(AtomicU64::new(42));
+
+        {
+            let _guard = ProcessingGuard(processing.clone());
+            assert_eq!(processing.load(Ordering::SeqCst), 42);
+        }
+
+        assert_eq!(processing.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn formation_agent_name_matches_registered_agent_name() {
+        assert_eq!(FormationAgent::NAME, "formation_memory");
+    }
+}
