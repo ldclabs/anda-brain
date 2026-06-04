@@ -10,7 +10,7 @@ All notable changes to the Anda Brain project.
 - **Contradiction and decay workflows now update matched proposition IDs.** Formation and Maintenance examples first retrieve existing proposition IDs, then use `(id: :link_id)` updates to avoid accidentally creating missing historical links while marking facts superseded or decayed.
 - **Brain Maintenance append patterns clarified.** Maintenance logs now use read-merge-write arrays instead of overwriting with a single-entry array, and confidence decay queries/updates are aligned with current KIP semantics.
 - **Brain Recall ranking guidance aligned with current KIP ordering.** Contextual briefing now uses a single `ORDER BY` expression and instructs Recall to synthesize strongest-first ranking from returned evidence fields.
-- **Dependencies updated.** `anda_cognitive_nexus` 0.7.19 → 0.7.20, `anda_engine` 0.12.28 → 0.12.29, `anda_db` family patch releases, `anda_kip` 0.7.13 → 0.7.14, `anda_object_store` 0.3.3 → 0.3.4, plus minor `chrono` and `log` bumps.
+- **Dependencies updated.** `anda_cognitive_nexus` 0.7.19 → 0.7.20, `anda_core` 0.12.6 → 0.12.7, `anda_engine` 0.12.28 → 0.12.30, `anda_db` family patch releases, `anda_kip` 0.7.13 → 0.7.14, `anda_object_store` 0.3.3 → 0.3.4, plus minor `chrono` and `log` bumps.
 
 ### Fixed
 - **Space creation now persists metadata before returning.** Newly created spaces close the initialized database after saving metadata, ensuring owner and tier extensions are durable for subsequent opens. Idle eviction now closes spaces instead of only flushing them so resources are released consistently.

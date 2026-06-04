@@ -157,9 +157,9 @@ dependencies = [
 
 [[package]]
 name = "anda_core"
-version = "0.12.6"
+version = "0.12.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7ee88d68ad301c5484a473b534bb14155d91e0e4e93d9d2405d85f47832c99c"
+checksum = "6d2c90576afccf16ad106d34f99640212aab44e08add4596aaf1b625c24b2a9b"
 dependencies = [
  "anda_db_schema",
  "async-trait",
@@ -311,9 +311,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.12.29"
+version = "0.12.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9a03797dad2a925ec41523e8a768dc2ec296313234d4dd0604731f31b075ee1"
+checksum = "b861aa13ab82dd1d66b06ad702537b42db62a9cc55dc5c0e855021b5340d2c90"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
