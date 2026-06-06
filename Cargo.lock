@@ -98,6 +98,7 @@ dependencies = [
  "axum",
  "ciborium",
  "clap",
+ "coset",
  "dotenv",
  "http",
  "ic_auth_types",

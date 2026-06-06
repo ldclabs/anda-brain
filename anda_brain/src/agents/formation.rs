@@ -2,7 +2,10 @@ use anda_core::{
     Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, Document, Documents, Message,
     Resource, StateFeatures, Tool, estimate_tokens,
 };
-use anda_db::schema::{DocumentId, Json, Map};
+use anda_db::{
+    query::Fv,
+    schema::{DocumentId, Json, Map},
+};
 use anda_engine::{
     context::AgentCtx,
     extension::note::{NoteTool, load_notes},
@@ -384,12 +387,16 @@ impl FormationAgent {
                     if let Some(failed_reason) = res.failed_reason {
                         conversation.failed_reason = Some(failed_reason);
                     } else {
+                        conversation.failed_reason = None;
                         push_completed_history(&self.history, conversation, 2);
                     }
 
                     // to_changes 失败不中断处理循环
                     match conversation.to_changes() {
-                        Ok(changes) => {
+                        Ok(mut changes) => {
+                            if conversation.failed_reason.is_none() {
+                                changes.insert("failed_reason".to_string(), Fv::Null);
+                            }
                             let _ = self
                                 .memory
                                 .update_conversation(conversation._id, changes)
@@ -508,10 +515,252 @@ impl Agent<AgentCtx> for FormationAgent {
 #[cfg(test)]
 mod tests {
     use super::{FormationAgent, ProcessingGuard};
+    use crate::{
+        agents::SELF_USER_ID,
+        space::AppState,
+        types::{FormationInput, InputContext, MaintenanceInput, MaintenanceScope},
+    };
+    use anda_core::{
+        Agent, AgentOutput, BoxError, BoxPinFut, CompletionRequest, Message, Principal,
+    };
+    use anda_db::{database::DBConfig, storage::StorageConfig};
+    use anda_engine::{
+        context::AgentCtx,
+        management::{BaseManagement, Visibility},
+        memory::{Conversation, ConversationRef, ConversationStatus},
+        model::{CompletionFeaturesDyn, Model, Models, reqwest},
+        unix_ms,
+    };
+    use object_store::memory::InMemory;
+    use serde_json::json;
+    use std::collections::BTreeSet;
     use std::sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
     };
+    use tokio::time::{Duration, sleep};
+
+    #[derive(Debug)]
+    struct SuccessCompleter;
+
+    impl CompletionFeaturesDyn for SuccessCompleter {
+        fn model_name(&self) -> String {
+            "success-test-model".to_string()
+        }
+
+        fn completion(&self, req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            Box::pin(async move {
+                Ok(AgentOutput {
+                    content: "formation done".to_string(),
+                    chat_history: vec![Message {
+                        role: "assistant".to_string(),
+                        content: vec![format!("processed: {}", req.prompt).into()],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                })
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    struct FailedReasonCompleter;
+
+    impl CompletionFeaturesDyn for FailedReasonCompleter {
+        fn model_name(&self) -> String {
+            "failed-reason-test-model".to_string()
+        }
+
+        fn completion(&self, _req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            Box::pin(async move {
+                Ok(AgentOutput {
+                    failed_reason: Some("formation failed".to_string()),
+                    chat_history: vec![Message {
+                        role: "assistant".to_string(),
+                        content: vec!["formation failure".to_string().into()],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                })
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    struct RetryCompleter {
+        calls: Arc<AtomicU64>,
+    }
+
+    impl CompletionFeaturesDyn for RetryCompleter {
+        fn model_name(&self) -> String {
+            "retry-test-model".to_string()
+        }
+
+        fn completion(&self, req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            let calls = self.calls.clone();
+            Box::pin(async move {
+                let call = calls.fetch_add(1, Ordering::SeqCst);
+                if call == 0 {
+                    Ok(AgentOutput {
+                        failed_reason: Some("transient formation failure".to_string()),
+                        chat_history: vec![Message {
+                            role: "assistant".to_string(),
+                            content: vec!["retry later".to_string().into()],
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    })
+                } else {
+                    Ok(AgentOutput {
+                        content: "formation retried".to_string(),
+                        chat_history: vec![Message {
+                            role: "assistant".to_string(),
+                            content: vec![format!("recovered: {}", req.prompt).into()],
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    })
+                }
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    struct ErrorCompleter;
+
+    impl CompletionFeaturesDyn for ErrorCompleter {
+        fn model_name(&self) -> String {
+            "error-test-model".to_string()
+        }
+
+        fn completion(&self, _req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            Box::pin(async move { Err("model error".into()) })
+        }
+    }
+
+    #[derive(Debug)]
+    struct SlowCompleter;
+
+    impl CompletionFeaturesDyn for SlowCompleter {
+        fn model_name(&self) -> String {
+            "slow-test-model".to_string()
+        }
+
+        fn completion(&self, req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            Box::pin(async move {
+                sleep(Duration::from_millis(150)).await;
+                Ok(AgentOutput {
+                    content: "done".to_string(),
+                    chat_history: vec![Message {
+                        role: "assistant".to_string(),
+                        content: vec![format!("processed: {}", req.prompt).into()],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                })
+            })
+        }
+    }
+
+    fn test_db_config(name: &str) -> DBConfig {
+        DBConfig {
+            name: name.to_string(),
+            description: "test database".to_string(),
+            storage: StorageConfig::default(),
+            lock: None,
+        }
+    }
+
+    fn test_app_state(name: &str) -> AppState {
+        test_app_state_with_models(name, Arc::new(Models::default()))
+    }
+
+    fn test_app_state_with_completer<C>(name: &str, completer: C) -> AppState
+    where
+        C: CompletionFeaturesDyn,
+    {
+        let models = Models::default();
+        models.set_model(Model::with_completer(Arc::new(completer)));
+        test_app_state_with_models(name, Arc::new(models))
+    }
+
+    fn test_app_state_with_models(name: &str, models: Arc<Models>) -> AppState {
+        let management = Arc::new(BaseManagement {
+            controller: SELF_USER_ID,
+            managers: BTreeSet::new(),
+            visibility: Visibility::Public,
+        });
+        let http_client = reqwest::Client::builder().build().unwrap();
+
+        AppState::new(
+            Arc::new(InMemory::new()),
+            Arc::new(test_db_config(name)),
+            management,
+            http_client,
+            models,
+            Arc::new(vec![]),
+            "anda_brain".to_string(),
+            "test".to_string(),
+            0,
+        )
+    }
+
+    fn formation_prompt(counterparty: Option<&str>) -> String {
+        formation_prompt_with_text("remember this preference", counterparty)
+    }
+
+    fn formation_prompt_with_text(text: &str, counterparty: Option<&str>) -> String {
+        serde_json::to_string(&FormationInput {
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: vec![text.to_string().into()],
+                ..Default::default()
+            }],
+            context: counterparty.map(|counterparty| InputContext {
+                counterparty: Some(counterparty.to_string()),
+                ..Default::default()
+            }),
+            timestamp: None,
+        })
+        .unwrap()
+    }
+
+    async fn stored_conversation(
+        space: &crate::space::Space,
+        messages: Vec<serde_json::Value>,
+    ) -> Conversation {
+        let now = unix_ms();
+        let mut conversation = Conversation {
+            user: SELF_USER_ID,
+            status: ConversationStatus::Submitted,
+            messages,
+            label: Some("formation".to_string()),
+            created_at: now,
+            updated_at: now,
+            ..Default::default()
+        };
+        let id = space
+            .memory
+            .add_conversation(ConversationRef::from(&conversation))
+            .await
+            .unwrap();
+        conversation._id = id;
+        conversation
+    }
+
+    async fn create_loaded_space(app: &AppState, id: &str) -> Arc<crate::space::Space> {
+        app.admin_create_space(
+            Principal::from_slice(&[1]),
+            Principal::from_slice(&[2]),
+            id.to_string(),
+            1,
+            unix_ms(),
+        )
+        .await
+        .unwrap();
+
+        app.load_space(id, false).await.unwrap()
+    }
 
     #[test]
     fn processing_guard_resets_conversation_id_on_drop() {
@@ -528,5 +777,598 @@ mod tests {
     #[test]
     fn formation_agent_name_matches_registered_agent_name() {
         assert_eq!(FormationAgent::NAME, "formation_memory");
+    }
+
+    #[tokio::test]
+    async fn formation_agent_trait_metadata_matches_runtime_registration() {
+        let app = test_app_state("formation_trait_metadata");
+        let space = create_loaded_space(&app, "formation_trait_metadata").await;
+
+        assert_eq!(
+            Agent::<AgentCtx>::name(space.formation.as_ref()),
+            FormationAgent::NAME
+        );
+        assert!(
+            Agent::<AgentCtx>::description(space.formation.as_ref()).contains("structured memory")
+        );
+        let tools = Agent::<AgentCtx>::tool_dependencies(space.formation.as_ref());
+        assert!(tools.iter().any(|name| name == "execute_kip"));
+        assert!(tools.iter().any(|name| name == "note"));
+    }
+
+    #[tokio::test]
+    async fn find_next_submitted_skips_terminal_and_non_formation_conversations() {
+        let app = test_app_state("formation_find_next");
+        let space = create_loaded_space(&app, "formation_find_next").await;
+        let now = unix_ms();
+
+        for conversation in [
+            Conversation {
+                user: SELF_USER_ID,
+                status: ConversationStatus::Completed,
+                label: Some("formation".to_string()),
+                created_at: now,
+                updated_at: now,
+                ..Default::default()
+            },
+            Conversation {
+                user: SELF_USER_ID,
+                status: ConversationStatus::Submitted,
+                label: Some("recall".to_string()),
+                created_at: now + 1,
+                updated_at: now + 1,
+                ..Default::default()
+            },
+            Conversation {
+                user: SELF_USER_ID,
+                status: ConversationStatus::Cancelled,
+                label: Some("formation".to_string()),
+                created_at: now + 2,
+                updated_at: now + 2,
+                ..Default::default()
+            },
+        ] {
+            space
+                .memory
+                .add_conversation(ConversationRef::from(&conversation))
+                .await
+                .unwrap();
+        }
+
+        let pending = Conversation {
+            user: SELF_USER_ID,
+            status: ConversationStatus::Submitted,
+            label: Some("formation".to_string()),
+            created_at: now + 3,
+            updated_at: now + 3,
+            ..Default::default()
+        };
+        let pending_id = space
+            .memory
+            .add_conversation(ConversationRef::from(&pending))
+            .await
+            .unwrap();
+
+        let found = space.formation.find_next_submitted(0).await.unwrap();
+        assert_eq!(found._id, pending_id);
+        assert!(
+            space
+                .formation
+                .find_next_submitted(pending_id)
+                .await
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn mark_conversation_failed_persists_status_and_reason() {
+        let app = test_app_state("formation_mark_failed");
+        let space = create_loaded_space(&app, "formation_mark_failed").await;
+        let now = unix_ms();
+        let mut conversation = Conversation {
+            user: SELF_USER_ID,
+            status: ConversationStatus::Submitted,
+            label: Some("formation".to_string()),
+            created_at: now,
+            updated_at: now,
+            ..Default::default()
+        };
+        let id = space
+            .memory
+            .add_conversation(ConversationRef::from(&conversation))
+            .await
+            .unwrap();
+        conversation._id = id;
+
+        space
+            .formation
+            .mark_conversation_failed(&mut conversation, "boom".to_string())
+            .await;
+
+        assert_eq!(conversation.status, ConversationStatus::Failed);
+        assert_eq!(conversation.failed_reason.as_deref(), Some("boom"));
+        let stored = space.memory.get_conversation(id).await.unwrap();
+        assert_eq!(stored.status, ConversationStatus::Failed);
+        assert_eq!(stored.failed_reason.as_deref(), Some("boom"));
+    }
+
+    #[tokio::test]
+    async fn start_process_rejects_busy_and_maintenance_states() {
+        let app = test_app_state("formation_start_guards");
+        let space = create_loaded_space(&app, "formation_start_guards").await;
+        let ctx = space
+            .ctx_for_test(SELF_USER_ID, FormationAgent::NAME)
+            .unwrap();
+
+        space
+            .formation
+            .processing_conversation
+            .store(42, Ordering::SeqCst);
+        let err = space
+            .formation
+            .start_process(ctx.clone(), 1)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("already processing conversation 42")
+        );
+        space
+            .formation
+            .processing_conversation
+            .store(0, Ordering::SeqCst);
+
+        let app = test_app_state_with_completer("formation_maintenance_guard", SlowCompleter);
+        let space = create_loaded_space(&app, "formation_maintenance_guard").await;
+        let maintenance = space
+            .maintenance(
+                SELF_USER_ID,
+                MaintenanceInput {
+                    scope: MaintenanceScope::Quick,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert!(maintenance.conversation.is_some());
+
+        let ctx = space
+            .ctx_for_test(SELF_USER_ID, FormationAgent::NAME)
+            .unwrap();
+        let err = space.formation.start_process(ctx, 1).await.unwrap_err();
+        assert!(err.to_string().contains("MaintenanceAgent is processing"));
+
+        for _ in 0..100 {
+            if !space.is_processing() {
+                return;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+        panic!("maintenance did not finish");
+    }
+
+    #[tokio::test]
+    async fn start_process_finds_pending_conversation_and_dispatches_worker() {
+        let app = test_app_state_with_completer("formation_start_success", SuccessCompleter);
+        let space = create_loaded_space(&app, "formation_start_success").await;
+        let ctx = space
+            .ctx_for_test(SELF_USER_ID, FormationAgent::NAME)
+            .unwrap();
+        let pending = stored_conversation(
+            &space,
+            vec![json!(Message {
+                role: "user".to_string(),
+                content: vec![formation_prompt(None).into()],
+                ..Default::default()
+            })],
+        )
+        .await;
+
+        space
+            .formation
+            .start_process(ctx, pending._id)
+            .await
+            .unwrap();
+        for _ in 0..100 {
+            if !space.formation.is_processing() {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+
+        assert_eq!(space.formation.get_processed(), Some(pending._id));
+        assert_eq!(
+            space
+                .memory
+                .get_conversation(pending._id)
+                .await
+                .unwrap()
+                .status,
+            ConversationStatus::Completed
+        );
+    }
+
+    #[tokio::test]
+    async fn run_queues_while_maintenance_runs_and_resumes_from_processed_gap() {
+        let app = test_app_state_with_completer("formation_run_resume_gap", SuccessCompleter);
+        let space = create_loaded_space(&app, "formation_run_resume_gap").await;
+        let ctx = space
+            .ctx_for_test(SELF_USER_ID, FormationAgent::NAME)
+            .unwrap();
+        space
+            .memory
+            .conversations
+            .save_extension("brain_processed".to_string(), 0_u64.into())
+            .await
+            .unwrap();
+        let missed = stored_conversation(
+            &space,
+            vec![json!(Message {
+                role: "user".to_string(),
+                content: vec![formation_prompt(None).into()],
+                ..Default::default()
+            })],
+        )
+        .await;
+
+        let output = Agent::<AgentCtx>::run(
+            space.formation.as_ref(),
+            ctx,
+            formation_prompt(Some("resume-gap-user")),
+            vec![],
+        )
+        .await
+        .unwrap();
+        let queued_id = output.conversation.unwrap();
+
+        for _ in 0..100 {
+            if !space.formation.is_processing() {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(space.formation.get_processed(), Some(queued_id));
+        assert_eq!(
+            space
+                .memory
+                .get_conversation(missed._id)
+                .await
+                .unwrap()
+                .status,
+            ConversationStatus::Completed
+        );
+
+        let app = test_app_state_with_completer("formation_run_maintenance_queue", SlowCompleter);
+        let space = create_loaded_space(&app, "formation_run_maintenance_queue").await;
+        let maintenance = space
+            .maintenance(
+                SELF_USER_ID,
+                MaintenanceInput {
+                    scope: MaintenanceScope::Quick,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert!(maintenance.conversation.is_some());
+        let ctx = space
+            .ctx_for_test(SELF_USER_ID, FormationAgent::NAME)
+            .unwrap();
+        let output = Agent::<AgentCtx>::run(
+            space.formation.as_ref(),
+            ctx,
+            formation_prompt(None),
+            vec![],
+        )
+        .await
+        .unwrap();
+        assert!(output.conversation.is_some());
+        assert!(!space.formation.is_processing());
+
+        for _ in 0..100 {
+            if !space.is_processing() {
+                return;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+        panic!("maintenance did not finish");
+    }
+
+    #[tokio::test]
+    async fn try_process_returns_when_another_conversation_owns_the_guard() {
+        let app = test_app_state("formation_try_process_guard");
+        let space = create_loaded_space(&app, "formation_try_process_guard").await;
+        let ctx = space
+            .ctx_for_test(SELF_USER_ID, FormationAgent::NAME)
+            .unwrap();
+        let conversation = stored_conversation(
+            &space,
+            vec![json!(Message {
+                role: "user".to_string(),
+                content: vec![formation_prompt(None).into()],
+                ..Default::default()
+            })],
+        )
+        .await;
+
+        space
+            .formation
+            .processing_conversation
+            .store(conversation._id + 10, Ordering::SeqCst);
+        space.formation.try_process(ctx, conversation.clone());
+
+        assert_eq!(
+            space
+                .formation
+                .processing_conversation
+                .load(Ordering::SeqCst),
+            conversation._id + 10
+        );
+    }
+
+    #[tokio::test]
+    async fn process_one_marks_missing_prompt_and_completion_errors() {
+        let app = test_app_state("formation_no_prompt");
+        let space = create_loaded_space(&app, "formation_no_prompt").await;
+        let ctx = space
+            .ctx_for_test(SELF_USER_ID, FormationAgent::NAME)
+            .unwrap();
+        let mut no_prompt = stored_conversation(&space, vec![]).await;
+
+        space.formation.process_one(&ctx, &mut no_prompt).await;
+
+        assert_eq!(no_prompt.status, ConversationStatus::Failed);
+        assert_eq!(no_prompt.failed_reason.as_deref(), Some("No prompt found"));
+
+        let app = test_app_state_with_completer("formation_model_error", ErrorCompleter);
+        let space = create_loaded_space(&app, "formation_model_error").await;
+        let ctx = space
+            .ctx_for_test(SELF_USER_ID, FormationAgent::NAME)
+            .unwrap();
+        let mut conversation = stored_conversation(
+            &space,
+            vec![json!(Message {
+                role: "user".to_string(),
+                content: vec![formation_prompt(Some("counterparty-error")).into()],
+                ..Default::default()
+            })],
+        )
+        .await;
+
+        space.formation.process_one(&ctx, &mut conversation).await;
+
+        assert_eq!(conversation.status, ConversationStatus::Failed);
+        assert!(
+            conversation
+                .failed_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("CompletionRunner error")
+        );
+    }
+
+    #[tokio::test]
+    async fn process_one_persists_model_failed_reason() {
+        let app = test_app_state_with_completer("formation_failed_reason", FailedReasonCompleter);
+        let space = create_loaded_space(&app, "formation_failed_reason").await;
+        let ctx = space
+            .ctx_for_test(SELF_USER_ID, FormationAgent::NAME)
+            .unwrap();
+        let mut conversation = stored_conversation(
+            &space,
+            vec![json!(Message {
+                role: "user".to_string(),
+                content: vec![formation_prompt(None).into()],
+                ..Default::default()
+            })],
+        )
+        .await;
+
+        space.formation.process_one(&ctx, &mut conversation).await;
+
+        assert_eq!(conversation.status, ConversationStatus::Failed);
+        assert_eq!(
+            conversation.failed_reason.as_deref(),
+            Some("formation failed")
+        );
+        let stored = space
+            .memory
+            .get_conversation(conversation._id)
+            .await
+            .unwrap();
+        assert_eq!(stored.status, ConversationStatus::Failed);
+        assert_eq!(stored.failed_reason.as_deref(), Some("formation failed"));
+    }
+
+    #[tokio::test]
+    async fn run_rejects_oversized_formation_input_before_persisting() {
+        let app = test_app_state("formation_input_too_large");
+        let space = create_loaded_space(&app, "formation_input_too_large").await;
+        let ctx = space
+            .ctx_for_test(SELF_USER_ID, FormationAgent::NAME)
+            .unwrap();
+        let prompt = "x ".repeat(1_000_000);
+
+        let err = Agent::<AgentCtx>::run(space.formation.as_ref(), ctx, prompt, vec![])
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("Input too large"));
+        assert_eq!(space.memory.conversations.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn process_loop_processes_submitted_formation_queue_sequentially() {
+        let app = test_app_state_with_completer("formation_process_loop_queue", SuccessCompleter);
+        let space = create_loaded_space(&app, "formation_process_loop_queue").await;
+        let ctx = space
+            .ctx_for_test(SELF_USER_ID, FormationAgent::NAME)
+            .unwrap();
+        let first = stored_conversation(
+            &space,
+            vec![json!(Message {
+                role: "user".to_string(),
+                content: vec![formation_prompt(None).into()],
+                ..Default::default()
+            })],
+        )
+        .await;
+        let second = stored_conversation(
+            &space,
+            vec![json!(Message {
+                role: "user".to_string(),
+                content: vec![formation_prompt(Some("queue-user")).into()],
+                ..Default::default()
+            })],
+        )
+        .await;
+
+        space
+            .formation
+            .processing_conversation
+            .store(first._id, Ordering::SeqCst);
+        space.formation.process_loop(ctx, first).await;
+
+        assert_eq!(
+            space
+                .formation
+                .processing_conversation
+                .load(Ordering::SeqCst),
+            0
+        );
+        assert_eq!(space.formation.get_processed(), Some(second._id));
+        assert_eq!(
+            space
+                .memory
+                .get_conversation(second._id)
+                .await
+                .unwrap()
+                .status,
+            ConversationStatus::Completed
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn process_loop_retries_failed_conversation_once_and_clears_failure_reason() {
+        let calls = Arc::new(AtomicU64::new(0));
+        let app = test_app_state_with_completer(
+            "formation_process_loop_retry",
+            RetryCompleter {
+                calls: calls.clone(),
+            },
+        );
+        let space = create_loaded_space(&app, "formation_process_loop_retry").await;
+        let ctx = space
+            .ctx_for_test(SELF_USER_ID, FormationAgent::NAME)
+            .unwrap();
+        let pending = stored_conversation(
+            &space,
+            vec![json!(Message {
+                role: "user".to_string(),
+                content: vec![formation_prompt(None).into()],
+                ..Default::default()
+            })],
+        )
+        .await;
+
+        space
+            .formation
+            .processing_conversation
+            .store(pending._id, Ordering::SeqCst);
+        space.formation.process_loop(ctx, pending.clone()).await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            space
+                .formation
+                .processing_conversation
+                .load(Ordering::SeqCst),
+            0
+        );
+        assert_eq!(space.formation.get_processed(), Some(pending._id));
+        let stored = space.memory.get_conversation(pending._id).await.unwrap();
+        assert_eq!(stored.status, ConversationStatus::Completed);
+        assert_eq!(stored.failed_reason, None);
+    }
+
+    #[tokio::test]
+    async fn process_loop_triggers_scheduled_maintenance_at_threshold() {
+        let app =
+            test_app_state_with_completer("formation_process_loop_maintenance", SuccessCompleter);
+        let space = create_loaded_space(&app, "formation_process_loop_maintenance").await;
+        let ctx = space
+            .ctx_for_test(SELF_USER_ID, FormationAgent::NAME)
+            .unwrap();
+
+        for _ in 0..20 {
+            let completed = Conversation {
+                user: SELF_USER_ID,
+                status: ConversationStatus::Completed,
+                label: Some("formation".to_string()),
+                created_at: unix_ms(),
+                updated_at: unix_ms(),
+                ..Default::default()
+            };
+            space
+                .memory
+                .add_conversation(ConversationRef::from(&completed))
+                .await
+                .unwrap();
+        }
+        let pending = stored_conversation(
+            &space,
+            vec![json!(Message {
+                role: "user".to_string(),
+                content: vec![formation_prompt(None).into()],
+                ..Default::default()
+            })],
+        )
+        .await;
+        assert_eq!(pending._id, 21);
+
+        space
+            .formation
+            .processing_conversation
+            .store(pending._id, Ordering::SeqCst);
+        space.formation.process_loop(ctx, pending).await;
+
+        assert_eq!(
+            space
+                .formation
+                .processing_conversation
+                .load(Ordering::SeqCst),
+            0
+        );
+        for _ in 0..100 {
+            if !space.is_processing() {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(space.maintenance_for_test().get_processed_at().daydream, 21);
+    }
+
+    #[tokio::test]
+    async fn process_one_reviews_large_prompts_and_appends_follow_up_history() {
+        let app = test_app_state_with_completer("formation_review_large_prompt", SuccessCompleter);
+        let space = create_loaded_space(&app, "formation_review_large_prompt").await;
+        let ctx = space
+            .ctx_for_test(SELF_USER_ID, FormationAgent::NAME)
+            .unwrap();
+        let large_text = "x".repeat(10_500);
+        let mut conversation = stored_conversation(
+            &space,
+            vec![json!(Message {
+                role: "user".to_string(),
+                content: vec![formation_prompt_with_text(&large_text, None).into()],
+                ..Default::default()
+            })],
+        )
+        .await;
+
+        space.formation.process_one(&ctx, &mut conversation).await;
+
+        assert_eq!(conversation.status, ConversationStatus::Completed);
+        assert!(conversation.messages.len() >= 2);
     }
 }

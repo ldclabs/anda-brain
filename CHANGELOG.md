@@ -2,7 +2,7 @@
 
 All notable changes to the Anda Brain project.
 
-## [0.6.9] — 2026-06-04
+## [0.6.9] — 2026-06-06
 
 ### Changed
 - **KIP syntax guidance updated for RC7-compatible value handling.** Brain prompt assets now document JSON-compatible KIP values, unquoted identifier object keys, parameter placeholders in complete KIP value positions, `SEARCH` parameter forms, optional proposition handles, and the registered `belongs_to_class` predicate.
@@ -11,10 +11,15 @@ All notable changes to the Anda Brain project.
 - **Brain Maintenance append patterns clarified.** Maintenance logs now use read-merge-write arrays instead of overwriting with a single-entry array, and confidence decay queries/updates are aligned with current KIP semantics.
 - **Brain Recall ranking guidance aligned with current KIP ordering.** Contextual briefing now uses a single `ORDER BY` expression and instructs Recall to synthesize strongest-first ranking from returned evidence fields.
 - **Dependencies updated.** `anda_cognitive_nexus` 0.7.19 → 0.7.20, `anda_core` 0.12.6 → 0.12.7, `anda_engine` 0.12.28 → 0.12.30, `anda_db` family patch releases, `anda_kip` 0.7.13 → 0.7.14, `anda_object_store` 0.3.3 → 0.3.4, plus minor `chrono` and `log` bumps.
+- **Service startup and shutdown paths split into testable units.** CLI parsing, model configuration, object-store selection, CORS setup, router construction, and cancellation-driven service shutdown now have focused coverage without changing the public command-line surface.
+- **Repository agent guidance added.** `AGENTS.md` now documents workspace layout, verification commands, Brain invariants, and API/doc synchronization expectations for future coding agents.
 
 ### Fixed
 - **Space creation now persists metadata before returning.** Newly created spaces close the initialized database after saving metadata, ensuring owner and tier extensions are durable for subsequent opens. Idle eviction now closes spaces instead of only flushing them so resources are released consistently.
 - **Formation and Maintenance history retention now records completed conversations only.** Shared history buffering ignores in-progress conversations and caps retained context deterministically, avoiding transient conversations leaking into later agent context.
+- **Formation retries now clear stale failure reasons after success.** A conversation that previously failed but later completes now persists a null `failed_reason`, preventing old error text from lingering on successful runs.
+- **BYOK updates now validate model configuration before persistence.** Invalid model settings fail before replacing stored BYOK configuration or mutating the runtime model registry.
+- **External cancellation now participates in graceful shutdown.** Service shutdown can be driven by the cancellation token as well as OS signals, making runtime shutdown deterministic in tests and embedded callers.
 
 ## [0.6.8] — 2026-06-04
 

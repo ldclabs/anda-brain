@@ -416,12 +416,24 @@ mod tests {
         http::{HeaderMap, Request, StatusCode, header},
         response::IntoResponse,
     };
-    use serde::{Deserialize, Serialize};
+    use serde::{Deserialize, Serialize, Serializer, ser::Error as _};
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     struct DemoPayload {
         name: String,
         count: u32,
+    }
+
+    #[derive(Debug)]
+    struct BadSerialize;
+
+    impl Serialize for BadSerialize {
+        fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            Err(S::Error::custom("bad serialize"))
+        }
     }
 
     fn demo_payload() -> DemoPayload {
@@ -459,6 +471,15 @@ mod tests {
 
         let headers = HeaderMap::new();
         assert_eq!(ContentType::from_header(&headers), ContentType::Json);
+        assert_eq!(ContentType::from_accept(&headers), ContentType::Json);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(header::CONTENT_TYPE, "text/plain".parse().unwrap());
+        headers.insert(header::ACCEPT, "application/xml".parse().unwrap());
+        assert_eq!(
+            ContentType::from_header(&headers),
+            ContentType::Markdown(false)
+        );
         assert_eq!(ContentType::from_accept(&headers), ContentType::Json);
     }
 
@@ -509,6 +530,19 @@ mod tests {
         assert!(err.message.contains("parse Markdown error"));
     }
 
+    #[test]
+    fn parse_body_json_and_cbor_report_decode_errors() {
+        let json_err = ContentType::Json
+            .parse_body::<DemoPayload>(b"{bad json")
+            .unwrap_err();
+        assert!(json_err.message.contains("parse JSON error"));
+
+        let cbor_err = ContentType::Cbor
+            .parse_body::<DemoPayload>(b"not cbor")
+            .unwrap_err();
+        assert!(cbor_err.message.contains("parse CBOR error"));
+    }
+
     #[tokio::test]
     async fn app_response_json_and_cbor_have_expected_headers_and_body() {
         let payload = demo_payload();
@@ -554,6 +588,40 @@ mod tests {
         let obj_text = std::str::from_utf8(&obj_bytes).unwrap();
         assert!(obj_text.contains("\"name\": \"alice\""));
         assert!(obj_text.contains("\"count\": 7"));
+    }
+
+    #[tokio::test]
+    async fn app_response_reports_serialization_errors_for_all_formats() {
+        let json = ContentType::Json.response(BadSerialize).into_response();
+        assert_eq!(json.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = to_bytes(json.into_body(), usize::MAX).await.unwrap();
+        assert!(
+            std::str::from_utf8(&body)
+                .unwrap()
+                .contains("JSON serialization error")
+        );
+
+        let cbor = ContentType::Cbor.response(BadSerialize).into_response();
+        assert_eq!(cbor.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = to_bytes(cbor.into_body(), usize::MAX).await.unwrap();
+        assert!(
+            std::str::from_utf8(&body)
+                .unwrap()
+                .contains("CBOR serialization error")
+        );
+
+        let markdown = ContentType::Markdown(true)
+            .response(BadSerialize)
+            .into_response();
+        assert_eq!(markdown.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = to_bytes(markdown.into_body(), usize::MAX).await.unwrap();
+        assert!(
+            std::str::from_utf8(&body)
+                .unwrap()
+                .contains("Markdown serialization error")
+        );
+
+        assert_eq!(StringOr::Value(BadSerialize).to_string(), "BadSerialize");
     }
 
     #[tokio::test]

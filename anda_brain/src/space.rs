@@ -3,7 +3,7 @@ use anda_core::{
     AgentInput, AgentOutput, BoxError, FunctionDefinition, Principal, Resource, Usage,
 };
 use anda_db::{
-    collection::CollectionConfig,
+    collection::{Collection, CollectionConfig},
     database::{AndaDB, DBConfig},
     error::DBError,
     index::BTree,
@@ -320,32 +320,34 @@ impl AppState {
                 _ = tokio::time::sleep(flush_interval) => {}
             }
 
-            let now = unix_ms();
+            self.flush_and_evict_once(unix_ms(), idle_timeout_ms).await;
+        }
+    }
 
-            // Collect entries snapshot under read lock
-            let entries: Vec<(String, Arc<SpaceEntry>)> = {
-                let spaces = self.spaces.read().await;
-                spaces.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+    async fn flush_and_evict_once(&self, now: u64, idle_timeout_ms: u64) {
+        // Collect entries snapshot under read lock
+        let entries: Vec<(String, Arc<SpaceEntry>)> = {
+            let spaces = self.spaces.read().await;
+            spaces.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        };
+
+        for (id, entry) in &entries {
+            let Some(space) = entry.cell.get() else {
+                continue;
             };
 
-            for (id, entry) in &entries {
-                let Some(space) = entry.cell.get() else {
-                    continue;
-                };
-
-                if self
-                    .try_remove_idle_space(id, entry, now, idle_timeout_ms)
-                    .await
-                {
-                    if let Err(err) = space.close().await {
-                        log::error!(target: "brain", space_id = id; "close before eviction failed: {err:?}");
-                    }
-                    log::warn!(target: "brain", space_id = id; "space evicted due to inactivity");
-                } else {
-                    // Periodic flush for active spaces
-                    if let Err(err) = space.flush().await {
-                        log::error!(target: "brain", space_id = id; "periodic flush failed: {err:?}");
-                    }
+            if self
+                .try_remove_idle_space(id, entry, now, idle_timeout_ms)
+                .await
+            {
+                if let Err(err) = space.close().await {
+                    log::error!(target: "brain", space_id = id; "close before eviction failed: {err:?}");
+                }
+                log::warn!(target: "brain", space_id = id; "space evicted due to inactivity");
+            } else {
+                // Periodic flush for active spaces
+                if let Err(err) = space.flush().await {
+                    log::error!(target: "brain", space_id = id; "periodic flush failed: {err:?}");
                 }
             }
         }
@@ -521,11 +523,11 @@ impl Space {
     }
 
     pub async fn update_byok(&self, model_config: ModelConfig) -> Result<(), BoxError> {
+        let engine_config: EngineModelConfig = model_config.clone().into();
+        let model = engine_config.model(self.http_client.clone())?;
         self.db
             .save_extension_from("byok".to_string(), &model_config.to_ref())
             .await?;
-        let model_config: EngineModelConfig = model_config.into();
-        let model = model_config.model(self.http_client.clone())?;
         self.models.set_model(model);
         Ok(())
     }
@@ -838,20 +840,7 @@ impl Space {
                     name: "conversations".to_string(),
                     description: "conversations collection".to_string(),
                 },
-                async |collection| {
-                    // set tokenizer
-                    collection.set_tokenizer(jieba_tokenizer());
-                    // create BTree index if not exists
-                    collection.create_btree_index_nx(&["user"]).await?;
-                    // remove old indexes if exists
-                    collection.remove_btree_index(&["thread"]).await?;
-                    collection.remove_btree_index(&["period"]).await?;
-                    collection
-                        .remove_bm25_index(&["messages", "resources", "artifacts"])
-                        .await?;
-
-                    Ok::<(), DBError>(())
-                },
+                async |collection| init_conversation_collection(collection).await,
             )
             .await?;
 
@@ -862,20 +851,7 @@ impl Space {
                     name: "recall".to_string(),
                     description: "Recall conversations collection".to_string(),
                 },
-                async |collection| {
-                    // set tokenizer
-                    collection.set_tokenizer(jieba_tokenizer());
-                    // create BTree index if not exists
-                    collection.create_btree_index_nx(&["user"]).await?;
-                    // remove old indexes if exists
-                    collection.remove_btree_index(&["thread"]).await?;
-                    collection.remove_btree_index(&["period"]).await?;
-                    collection
-                        .remove_bm25_index(&["messages", "resources", "artifacts"])
-                        .await?;
-
-                    Ok::<(), DBError>(())
-                },
+                async |collection| init_conversation_collection(collection).await,
             )
             .await?;
 
@@ -886,20 +862,7 @@ impl Space {
                     name: "maintenance".to_string(),
                     description: "Maintenance conversations collection".to_string(),
                 },
-                async |collection| {
-                    // set tokenizer
-                    collection.set_tokenizer(jieba_tokenizer());
-                    // create BTree index if not exists
-                    collection.create_btree_index_nx(&["user"]).await?;
-                    // remove old indexes if exists
-                    collection.remove_btree_index(&["thread"]).await?;
-                    collection.remove_btree_index(&["period"]).await?;
-                    collection
-                        .remove_bm25_index(&["messages", "resources", "artifacts"])
-                        .await?;
-
-                    Ok::<(), DBError>(())
-                },
+                async |collection| init_conversation_collection(collection).await,
             )
             .await?;
 
@@ -910,20 +873,7 @@ impl Space {
                     name: "resources".to_string(),
                     description: "Resources collection".to_string(),
                 },
-                async |collection| {
-                    // set tokenizer
-                    collection.set_tokenizer(jieba_tokenizer());
-                    // create BTree indexes if not exists
-                    collection.create_btree_index_nx(&["tags"]).await?;
-                    collection.create_btree_index_nx(&["hash"]).await?;
-                    collection.create_btree_index_nx(&["mime_type"]).await?;
-                    // remove old BM25 index if exists
-                    collection
-                        .remove_bm25_index(&["name", "description", "metadata"])
-                        .await?;
-
-                    Ok::<(), DBError>(())
-                },
+                async |collection| init_resource_collection(collection).await,
             )
             .await?;
 
@@ -1039,6 +989,7 @@ impl Hooks {
     }
 }
 
+// grcov-excl-start: async_trait rewrites this impl into generated futures; behavior is covered by hook and agent scheduling tests.
 #[async_trait::async_trait]
 impl BrainHook for Hooks {
     fn is_maintenance_processing(&self) -> bool {
@@ -1141,6 +1092,29 @@ impl BrainHook for Hooks {
         None
     }
 }
+// grcov-excl-stop
+
+async fn init_conversation_collection(collection: &mut Collection) -> Result<(), DBError> {
+    collection.set_tokenizer(jieba_tokenizer());
+    collection.create_btree_index_nx(&["user"]).await?;
+    collection.remove_btree_index(&["thread"]).await?;
+    collection.remove_btree_index(&["period"]).await?;
+    collection
+        .remove_bm25_index(&["messages", "resources", "artifacts"])
+        .await?;
+    Ok(())
+}
+
+async fn init_resource_collection(collection: &mut Collection) -> Result<(), DBError> {
+    collection.set_tokenizer(jieba_tokenizer());
+    collection.create_btree_index_nx(&["tags"]).await?;
+    collection.create_btree_index_nx(&["hash"]).await?;
+    collection.create_btree_index_nx(&["mime_type"]).await?;
+    collection
+        .remove_bm25_index(&["name", "description", "metadata"])
+        .await?;
+    Ok(())
+}
 
 async fn init_nexus_kip(nexus: &CognitiveNexus) -> Result<(), KipError> {
     if !nexus
@@ -1160,15 +1134,213 @@ async fn init_nexus_kip(nexus: &CognitiveNexus) -> Result<(), KipError> {
 }
 
 #[cfg(test)]
+impl Space {
+    pub(crate) fn ctx_for_test(
+        &self,
+        user: Principal,
+        agent_name: &str,
+    ) -> Result<anda_engine::context::AgentCtx, BoxError> {
+        self.engine
+            .ctx_with(user, agent_name, agent_name, Default::default())
+    }
+
+    pub(crate) fn maintenance_for_test(&self) -> Arc<MaintenanceAgent> {
+        self.maintenance.clone()
+    }
+}
+
+#[cfg(test)]
 mod tests {
-    use super::{Space, SpaceEntry};
-    use crate::types::SpaceTier;
-    use anda_core::Principal;
-    use anda_db::{database::DBConfig, storage::StorageConfig};
-    use anda_engine::unix_ms;
+    use super::{
+        AppState, Hooks, Space, SpaceEntry, init_conversation_collection, init_resource_collection,
+    };
+    use crate::{
+        agents::{BrainHook, SELF_USER_ID, TimedMemoryReadonly},
+        payload::StringOr,
+        types::{
+            AddSpaceTokenInput, FormationInput, InputContext, MaintenanceInput, MaintenanceScope,
+            ModelConfig, RecallInput, SpaceTier, TokenScope, UpdateSpaceInput,
+        },
+    };
+    use anda_core::{
+        AgentOutput, BoxError, BoxPinFut, CompletionRequest, Message, Principal, Resource, Tool,
+        Usage,
+    };
+    use anda_db::{collection::CollectionConfig, database::DBConfig, storage::StorageConfig};
+    use anda_engine::{
+        context::BaseCtx,
+        management::{BaseManagement, Visibility},
+        memory::{Conversation, ConversationRef, ConversationStatus, MemoryReadonly},
+        model::{CompletionFeaturesDyn, Model, Models, reqwest},
+        unix_ms,
+    };
+    use coset::{cbor::value::Value, cwt::ClaimsSetBuilder};
+    use ic_auth_types::ByteBufB64;
+    use ic_cose_types::cose::{
+        CborSerializable,
+        ed25519::{SigningKey, VerifyingKey, ed25519_sign},
+        iana,
+        sign1::cose_sign1,
+    };
     use object_store::memory::InMemory;
+    use std::collections::BTreeSet;
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
+    use tokio::time::{Duration, sleep};
+    use tokio_util::sync::CancellationToken;
+
+    #[derive(Debug)]
+    struct FinalCompleter;
+
+    impl CompletionFeaturesDyn for FinalCompleter {
+        fn model_name(&self) -> String {
+            "final-test-model".to_string()
+        }
+
+        fn completion(&self, req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            Box::pin(async move {
+                Ok(AgentOutput {
+                    content: "done".to_string(),
+                    chat_history: vec![Message {
+                        role: "assistant".to_string(),
+                        content: vec![format!("processed: {}", req.prompt).into()],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                })
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    struct SlowCompleter;
+
+    impl CompletionFeaturesDyn for SlowCompleter {
+        fn model_name(&self) -> String {
+            "slow-test-model".to_string()
+        }
+
+        fn completion(&self, req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            Box::pin(async move {
+                sleep(Duration::from_millis(150)).await;
+                Ok(AgentOutput {
+                    content: "slow done".to_string(),
+                    chat_history: vec![Message {
+                        role: "assistant".to_string(),
+                        content: vec![format!("slow processed: {}", req.prompt).into()],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                })
+            })
+        }
+    }
+
+    fn test_db_config(name: &str) -> DBConfig {
+        DBConfig {
+            name: name.to_string(),
+            description: "test database".to_string(),
+            storage: StorageConfig::default(),
+            lock: None,
+        }
+    }
+
+    fn test_app_state(name: &str) -> AppState {
+        test_app_state_with_models(name, Arc::new(Models::default()))
+    }
+
+    fn test_app_state_with_final_model(name: &str) -> AppState {
+        let models = Models::default();
+        models.set_model(Model::with_completer(Arc::new(FinalCompleter)));
+        test_app_state_with_models(name, Arc::new(models))
+    }
+
+    fn test_app_state_with_slow_model(name: &str) -> AppState {
+        let models = Models::default();
+        models.set_model(Model::with_completer(Arc::new(SlowCompleter)));
+        test_app_state_with_models(name, Arc::new(models))
+    }
+
+    fn test_app_state_with_pubkeys(name: &str) -> AppState {
+        let mut bytes = [0x66; 32];
+        bytes[0] = 0x58;
+        let key = VerifyingKey::from_bytes(&bytes).unwrap();
+        let mut app = test_app_state_with_models(name, Arc::new(Models::default()));
+        app.ed25519_pubkeys = Arc::new(vec![key]);
+        app
+    }
+
+    fn test_signing_key() -> SigningKey {
+        SigningKey::from_bytes(&[7u8; 32])
+    }
+
+    fn test_app_state_with_signing_key(name: &str, signing_key: &SigningKey) -> AppState {
+        let mut app = test_app_state_with_models(name, Arc::new(Models::default()));
+        app.ed25519_pubkeys = Arc::new(vec![signing_key.verifying_key()]);
+        app
+    }
+
+    fn signed_token(
+        signing_key: &SigningKey,
+        user: Principal,
+        audience: &str,
+        scope: &str,
+    ) -> String {
+        let claims = ClaimsSetBuilder::new()
+            .subject(user.to_string())
+            .audience(audience.to_string())
+            .claim(iana::CwtClaimName::Scope, Value::Text(scope.to_string()))
+            .build();
+        let payload = claims.to_vec().unwrap();
+        let mut sign1 = cose_sign1(payload, iana::Algorithm::EdDSA, None).unwrap();
+        sign1.signature = ed25519_sign(signing_key.as_bytes(), &sign1.tbs_data(&[])).to_vec();
+        ByteBufB64(sign1.to_vec().unwrap()).to_string()
+    }
+
+    fn test_app_state_with_models(name: &str, models: Arc<Models>) -> AppState {
+        let management = Arc::new(BaseManagement {
+            controller: SELF_USER_ID,
+            managers: BTreeSet::new(),
+            visibility: Visibility::Public,
+        });
+        let http_client = reqwest::Client::builder().build().unwrap();
+
+        AppState::new(
+            Arc::new(InMemory::new()),
+            Arc::new(test_db_config(name)),
+            management,
+            http_client,
+            models,
+            Arc::new(vec![]),
+            "anda_brain".to_string(),
+            "test".to_string(),
+            0,
+        )
+    }
+
+    async fn wait_until_idle(space: &Space) {
+        for _ in 0..100 {
+            if !space.is_processing() {
+                return;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+        panic!("space did not become idle");
+    }
+
+    async fn create_loaded_space(app: &AppState, id: &str) -> Arc<Space> {
+        app.admin_create_space(
+            Principal::from_slice(&[1]),
+            Principal::from_slice(&[2]),
+            id.to_string(),
+            1,
+            123,
+        )
+        .await
+        .unwrap();
+
+        app.load_space(id, false).await.unwrap()
+    }
 
     #[test]
     fn space_entry_starts_uninitialized_with_recent_access_time() {
@@ -1195,12 +1367,7 @@ mod tests {
     #[tokio::test]
     async fn create_space_persists_metadata_before_returning() {
         let object_store = Arc::new(InMemory::new());
-        let db_config = DBConfig {
-            name: "create_space_persists_metadata".to_string(),
-            description: "test database".to_string(),
-            storage: StorageConfig::default(),
-            lock: None,
-        };
+        let db_config = test_db_config("create_space_persists_metadata");
         let creator = Principal::from_slice(&[1]);
         let owner = Principal::from_slice(&[2]);
 
@@ -1228,5 +1395,795 @@ mod tests {
         assert_eq!(persisted_tier.tier, 1);
 
         db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn collection_bootstrap_helpers_create_and_prune_indexes() {
+        let object_store = Arc::new(InMemory::new());
+        let db_config = test_db_config("collection_bootstrap_helpers");
+        let db = anda_db::database::AndaDB::create(object_store, db_config)
+            .await
+            .unwrap();
+        let mut conversation_schema = Conversation::schema().unwrap();
+        conversation_schema.with_version(4);
+
+        let conversations = db
+            .open_or_create_collection(
+                conversation_schema,
+                CollectionConfig {
+                    name: "conversations".to_string(),
+                    description: "conversations collection".to_string(),
+                },
+                async |collection| {
+                    collection.create_btree_index_nx(&["thread"]).await?;
+                    collection.create_btree_index_nx(&["period"]).await?;
+                    collection
+                        .create_bm25_index_nx(&["messages", "resources", "artifacts"])
+                        .await?;
+                    init_conversation_collection(collection).await
+                },
+            )
+            .await
+            .unwrap();
+        let meta = conversations.metadata();
+        assert!(meta.btree_indexes.contains_key("user"));
+        assert!(!meta.btree_indexes.contains_key("thread"));
+        assert!(!meta.btree_indexes.contains_key("period"));
+        assert!(
+            !meta
+                .bm25_indexes
+                .contains_key("messages-resources-artifacts")
+        );
+
+        let resources = db
+            .open_or_create_collection(
+                Resource::schema().unwrap(),
+                CollectionConfig {
+                    name: "resources".to_string(),
+                    description: "Resources collection".to_string(),
+                },
+                async |collection| {
+                    collection
+                        .create_bm25_index_nx(&["name", "description", "metadata"])
+                        .await?;
+                    init_resource_collection(collection).await
+                },
+            )
+            .await
+            .unwrap();
+        let meta = resources.metadata();
+        assert!(meta.btree_indexes.contains_key("tags"));
+        assert!(meta.btree_indexes.contains_key("hash"));
+        assert!(meta.btree_indexes.contains_key("mime_type"));
+        assert!(!meta.bm25_indexes.contains_key("name-description-metadata"));
+
+        db.close().await.unwrap();
+    }
+
+    #[test]
+    fn app_state_allows_local_auth_when_no_pubkeys_are_configured() {
+        let app = test_app_state("local_auth");
+        let now_ms = 123;
+
+        let admin = app
+            .check_admin("", "space", TokenScope::Write, now_ms)
+            .unwrap();
+        assert_eq!(admin.user, Principal::management_canister());
+        assert_eq!(admin.audience, "space");
+        assert_eq!(admin.scope, TokenScope::Write);
+
+        let user = app
+            .check_auth("", "space", TokenScope::Read, now_ms)
+            .unwrap();
+        assert_eq!(user.user, SELF_USER_ID);
+
+        let optional = app
+            .check_auth_if("", "space", TokenScope::Read, now_ms)
+            .unwrap()
+            .unwrap();
+        assert_eq!(optional.user, SELF_USER_ID);
+    }
+
+    #[test]
+    fn app_state_rejects_invalid_tokens_when_pubkeys_are_configured() {
+        let app = test_app_state_with_pubkeys("configured_auth");
+        let now_ms = 123;
+
+        assert!(
+            app.check_auth_if("short", "space", TokenScope::Read, now_ms)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            app.check_auth("not-base64", "space", TokenScope::Read, now_ms)
+                .is_err()
+        );
+        assert!(
+            app.check_admin("not-base64", "space", TokenScope::Write, now_ms)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn app_state_accepts_valid_signed_tokens_and_rejects_scope_mismatches() {
+        let signing_key = test_signing_key();
+        let app = test_app_state_with_signing_key("signed_auth", &signing_key);
+        let now_ms = 1_725_000_000_000;
+
+        let read_token = signed_token(&signing_key, SELF_USER_ID, "space-a", "read");
+        let auth = app
+            .check_auth(&read_token, "space-a", TokenScope::Read, now_ms)
+            .unwrap();
+        assert_eq!(auth.user, SELF_USER_ID);
+        assert_eq!(auth.audience, "space-a");
+        assert_eq!(auth.scope, TokenScope::Read);
+        assert!(
+            app.check_auth(&read_token, "space-a", TokenScope::Write, now_ms)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("insufficient scope")
+        );
+        assert!(
+            app.check_auth(&read_token, "space-b", TokenScope::Read, now_ms)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("invalid audience")
+        );
+
+        let admin_token = signed_token(&signing_key, SELF_USER_ID, "*", "*");
+        let admin = app
+            .check_admin(&admin_token, "any-space", TokenScope::Write, now_ms)
+            .unwrap();
+        assert_eq!(admin.user, SELF_USER_ID);
+        assert_eq!(admin.scope, TokenScope::All);
+
+        let optional = app
+            .check_auth_if(&admin_token, "any-space", TokenScope::Read, now_ms)
+            .unwrap()
+            .unwrap();
+        assert_eq!(optional.audience, "*");
+
+        let non_admin = signed_token(&signing_key, Principal::from_slice(&[99]), "*", "*");
+        assert!(
+            app.check_admin(&non_admin, "any-space", TokenScope::Read, now_ms)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("admin access required")
+        );
+    }
+
+    #[tokio::test]
+    async fn app_state_loads_spaces_once_and_rejects_duplicate_loaded_space() {
+        let app = test_app_state("load_cache");
+        let id = "load_cache_space";
+        let owner = Principal::from_slice(&[3]);
+
+        let info = app
+            .admin_create_space(Principal::from_slice(&[1]), owner, id.to_string(), 2, 456)
+            .await
+            .unwrap();
+        assert_eq!(info.id, id);
+        assert_eq!(info.owner, owner.to_string());
+
+        let loaded = app.load_space(id, false).await.unwrap();
+        let loaded_again = app.load_space(id, false).await.unwrap();
+        assert!(Arc::ptr_eq(&loaded, &loaded_again));
+
+        let err = app
+            .admin_create_space(Principal::from_slice(&[1]), owner, id.to_string(), 2, 456)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("already exists"));
+    }
+
+    #[tokio::test]
+    async fn app_state_background_shutdown_and_idle_eviction_paths() {
+        let app = test_app_state("background_eviction");
+        let space_id = "background_eviction_space";
+        let space = create_loaded_space(&app, space_id).await;
+
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_secs(2), app.start_background_tasks(cancel))
+            .await
+            .unwrap();
+
+        let entry = {
+            let spaces = app.spaces.read().await;
+            spaces.get(space_id).unwrap().clone()
+        };
+        app.flush_and_evict_once(unix_ms(), 10_000).await;
+        assert!(app.spaces.read().await.contains_key(space_id));
+
+        entry.last_access_ms.store(0, Ordering::Relaxed);
+        assert!(!app.try_remove_idle_space(space_id, &entry, 10_000, 1).await);
+
+        let wrong_entry = Arc::new(SpaceEntry::new());
+        assert!(
+            !app.try_remove_idle_space(space_id, &wrong_entry, 10_000, 1)
+                .await
+        );
+
+        drop(space);
+        for _ in 0..100 {
+            let space_refs = entry.cell.get().map(Arc::strong_count).unwrap_or_default();
+            if space_refs == 1 {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+        drop(entry);
+        app.flush_and_evict_once(10_000, 1).await;
+        assert!(!app.spaces.read().await.contains_key(space_id));
+
+        let missing_entry = Arc::new(SpaceEntry::new());
+        assert!(
+            !app.try_remove_idle_space("missing_space", &missing_entry, 10_000, 1)
+                .await
+        );
+
+        assert!(app.load_space("never_created_space", false).await.is_err());
+        let uninitialized = {
+            let spaces = app.spaces.read().await;
+            spaces.get("never_created_space").unwrap().clone()
+        };
+        assert!(
+            !app.try_remove_idle_space("never_created_space", &uninitialized, 10_000, 1)
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn space_metadata_tier_byok_and_tokens_roundtrip() {
+        let app = test_app_state("space_metadata");
+        let space = create_loaded_space(&app, "space_metadata").await;
+
+        let tier = space.admin_update_tier(3, 999).await.unwrap();
+        assert_eq!(tier.tier, 3);
+        assert_eq!(space.get_tier().tier, 3);
+
+        space
+            .update(
+                UpdateSpaceInput {
+                    name: Some("Research Brain".to_string()),
+                    description: Some("memory space".to_string()),
+                    public: Some(true),
+                },
+                1000,
+            )
+            .await
+            .unwrap();
+        assert!(space.is_public());
+
+        let info = space.get_info();
+        assert_eq!(info.name.as_deref(), Some("Research Brain"));
+        assert_eq!(info.description.as_deref(), Some("memory space"));
+        assert_eq!(info.tier.tier, 3);
+
+        let byok = ModelConfig {
+            family: "openai".to_string(),
+            model: "gpt-test".to_string(),
+            api_base: "https://api.example.test".to_string(),
+            api_key: "test-key".to_string(),
+            ..Default::default()
+        };
+        space.update_byok(byok.clone()).await.unwrap();
+        assert_eq!(space.get_byok().unwrap().model, byok.model);
+
+        let disabled_byok = ModelConfig {
+            family: "openai".to_string(),
+            model: "disabled-test".to_string(),
+            api_base: "https://api.example.test".to_string(),
+            api_key: "test-key".to_string(),
+            disabled: true,
+            ..Default::default()
+        };
+        let err = space.update_byok(disabled_byok).await.unwrap_err();
+        assert!(err.to_string().contains("model is disabled"));
+        assert_eq!(space.get_byok().unwrap().model, byok.model);
+
+        let token = "STtest-token".to_string();
+        let st = space
+            .add_space_token(
+                token.clone(),
+                AddSpaceTokenInput {
+                    scope: TokenScope::Read,
+                    name: "reader".to_string(),
+                    expires_at: Some(2000),
+                },
+                1100,
+            )
+            .await
+            .unwrap();
+        assert_eq!(st.scope, TokenScope::Read);
+        assert_eq!(st.name, "reader");
+
+        space
+            .verify_space_token(token.clone(), TokenScope::Read, 1200)
+            .unwrap();
+        assert!(
+            space
+                .verify_space_token(token.clone(), TokenScope::Write, 1200)
+                .is_err()
+        );
+        assert!(
+            space
+                .verify_space_token(token.clone(), TokenScope::Read, 2500)
+                .is_err()
+        );
+
+        let tokens = space.list_space_tokens().unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].token, token);
+        assert_eq!(tokens[0].usage, 1);
+
+        assert!(space.revoke_space_token("STtest-token").await.unwrap());
+        assert!(!space.revoke_space_token("STtest-token").await.unwrap());
+
+        space
+            .update(
+                UpdateSpaceInput {
+                    name: None,
+                    description: None,
+                    public: None,
+                },
+                3000,
+            )
+            .await
+            .unwrap();
+        assert!(space.get_byok().is_some());
+    }
+
+    #[tokio::test]
+    async fn space_token_limit_and_tier_node_limit_are_enforced() {
+        let app = test_app_state("space_limits");
+        let space = create_loaded_space(&app, "space_limits").await;
+        space.admin_update_tier(0, 1).await.unwrap();
+
+        for idx in 0..100 {
+            space
+                .add_space_token(
+                    format!("STlimit-{idx}"),
+                    AddSpaceTokenInput {
+                        scope: TokenScope::Read,
+                        name: format!("reader-{idx}"),
+                        expires_at: None,
+                    },
+                    idx,
+                )
+                .await
+                .unwrap();
+        }
+        let err = space
+            .add_space_token(
+                "STlimit-overflow".to_string(),
+                AddSpaceTokenInput {
+                    scope: TokenScope::Read,
+                    name: "overflow".to_string(),
+                    expires_at: None,
+                },
+                101,
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("space token limit reached"));
+
+        for idx in 0..101 {
+            let conversation = Conversation {
+                user: SELF_USER_ID,
+                status: ConversationStatus::Completed,
+                created_at: idx,
+                updated_at: idx,
+                label: Some("formation".to_string()),
+                ..Default::default()
+            };
+            space
+                .memory
+                .add_conversation(ConversationRef::from(&conversation))
+                .await
+                .unwrap();
+        }
+        let err = space
+            .ingest(
+                SELF_USER_ID,
+                StringOr::Value(FormationInput {
+                    messages: vec![],
+                    context: None,
+                    timestamp: None,
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("node limit exceeded"));
+    }
+
+    #[tokio::test]
+    async fn space_conversations_are_accessible_across_collections() {
+        let app = test_app_state("space_conversations");
+        let space = create_loaded_space(&app, "space_conversations").await;
+        let now = unix_ms();
+
+        let formation = Conversation {
+            user: SELF_USER_ID,
+            status: ConversationStatus::Completed,
+            created_at: now,
+            updated_at: now,
+            label: Some("formation".to_string()),
+            ..Default::default()
+        };
+        let recall = Conversation {
+            user: SELF_USER_ID,
+            status: ConversationStatus::Completed,
+            created_at: now + 1,
+            updated_at: now + 1,
+            label: Some("recall".to_string()),
+            ..Default::default()
+        };
+        let maintenance = Conversation {
+            user: SELF_USER_ID,
+            status: ConversationStatus::Completed,
+            created_at: now + 2,
+            updated_at: now + 2,
+            label: Some("maintenance".to_string()),
+            ..Default::default()
+        };
+
+        let formation_id = space
+            .memory
+            .add_conversation(ConversationRef::from(&formation))
+            .await
+            .unwrap();
+        let recall_id = space
+            .recall
+            .conversations
+            .add_conversation(ConversationRef::from(&recall))
+            .await
+            .unwrap();
+        let maintenance_id = space
+            .maintenance
+            .conversations
+            .add_conversation(ConversationRef::from(&maintenance))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            space
+                .get_conversation(None, formation_id)
+                .await
+                .unwrap()
+                .label,
+            Some("formation".to_string())
+        );
+        assert_eq!(
+            space
+                .get_conversation(Some("recall".to_string()), recall_id)
+                .await
+                .unwrap()
+                .label,
+            Some("recall".to_string())
+        );
+        assert_eq!(
+            space
+                .get_conversation(Some("maintenance".to_string()), maintenance_id)
+                .await
+                .unwrap()
+                .label,
+            Some("maintenance".to_string())
+        );
+
+        let (items, cursor) = space.list_conversations(None, None, Some(1)).await.unwrap();
+        assert_eq!(items.len(), 1);
+        assert!(cursor.is_some());
+
+        let (recall_items, _) = space
+            .list_conversations(Some("recall".to_string()), None, Some(10))
+            .await
+            .unwrap();
+        assert_eq!(recall_items.len(), 1);
+
+        let status = space.formation_status();
+        assert_eq!(status.conversations, 1);
+        assert!(!status.formation_processing);
+        assert!(!status.maintenance_processing);
+
+        assert!(
+            space
+                .list_conversations(None, Some("not-a-cursor".to_string()), Some(1))
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn space_agent_entrypoints_use_memory_and_model_without_network() {
+        let app = test_app_state_with_final_model("space_agent_entrypoints");
+        let space = create_loaded_space(&app, "space_agent_entrypoints").await;
+
+        let formation = FormationInput {
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: vec![
+                    "remember that the preferred color is blue"
+                        .to_string()
+                        .into(),
+                ],
+                ..Default::default()
+            }],
+            context: Some(InputContext {
+                counterparty: Some("external-user-formation".to_string()),
+                agent: Some("agent-a".to_string()),
+                source: Some("thread-1".to_string()),
+                topic: Some("preferences".to_string()),
+            }),
+            timestamp: Some("2026-06-05T00:00:00Z".to_string()),
+        };
+        let formation_output = space
+            .ingest(SELF_USER_ID, StringOr::Value(formation))
+            .await
+            .unwrap();
+        let formation_id = formation_output.conversation.unwrap();
+        wait_until_idle(&space).await;
+
+        let formation_conversation = space.get_conversation(None, formation_id).await.unwrap();
+        assert_eq!(formation_conversation.status, ConversationStatus::Completed);
+        assert_eq!(space.formation.get_processed(), Some(formation_id));
+
+        let counterparty = space
+            .formation
+            .get_or_init_counterparty(
+                "external-user-formation".to_string(),
+                Some("Formation User".to_string()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(counterparty["type"], "Person");
+        assert!(counterparty.to_string().contains("external-user-formation"));
+
+        let recall = RecallInput {
+            query: "What color is preferred?".to_string(),
+            context: Some(InputContext {
+                counterparty: Some("external-user-formation".to_string()),
+                agent: None,
+                source: None,
+                topic: Some("preferences".to_string()),
+            }),
+        };
+        let recall_output = space
+            .query(SELF_USER_ID, StringOr::Value(recall))
+            .await
+            .unwrap();
+        let recall_id = recall_output.conversation.unwrap();
+        let recall_conversation = space
+            .get_conversation(Some("recall".to_string()), recall_id)
+            .await
+            .unwrap();
+        assert_eq!(recall_conversation.status, ConversationStatus::Completed);
+
+        let maintenance_output = space
+            .maintenance(
+                SELF_USER_ID,
+                MaintenanceInput {
+                    scope: MaintenanceScope::Quick,
+                    formation_id,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert!(maintenance_output.conversation.is_some());
+        wait_until_idle(&space).await;
+        assert_eq!(space.maintenance.get_processed_at().quick, formation_id);
+        space
+            .maintenance
+            .set_processed_at(MaintenanceScope::Full, formation_id + 1)
+            .await
+            .unwrap();
+        space
+            .maintenance
+            .set_processed_at(MaintenanceScope::Daydream, formation_id + 2)
+            .await
+            .unwrap();
+        let maintenance_at = space.maintenance.get_processed_at();
+        assert_eq!(maintenance_at.full, formation_id + 1);
+        assert_eq!(maintenance_at.daydream, formation_id + 2);
+
+        let kip = space
+            .execute_kip_readonly(anda_kip::Request {
+                command: "DESCRIBE PRIMER".to_string(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(!serde_json::to_value(kip).unwrap().is_null());
+
+        let restart_err = space
+            .restart_formation(SELF_USER_ID, formation_id + 1)
+            .await
+            .unwrap_err();
+        assert!(
+            restart_err
+                .to_string()
+                .contains("No pending formation conversation")
+        );
+    }
+
+    #[tokio::test]
+    async fn space_agent_guards_and_readonly_tool_paths() {
+        let app = test_app_state_with_final_model("space_agent_guards");
+        let space = create_loaded_space(&app, "space_agent_guards").await;
+
+        let readonly = TimedMemoryReadonly::new(space.memory.clone());
+        assert_eq!(Tool::<BaseCtx>::name(&readonly), MemoryReadonly::NAME);
+        assert_eq!(Tool::<BaseCtx>::definition(&readonly).strict, Some(true));
+
+        let ok_ctx = space
+            .engine
+            .base_ctx_with(
+                SELF_USER_ID,
+                "recall_memory",
+                MemoryReadonly::NAME,
+                Default::default(),
+            )
+            .unwrap();
+        let ok = Tool::<BaseCtx>::call(
+            &readonly,
+            ok_ctx,
+            anda_kip::Request {
+                command: "DESCRIBE PRIMER".to_string(),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+        assert_eq!(ok.is_error, None);
+
+        let err_ctx = space
+            .engine
+            .base_ctx_with(
+                SELF_USER_ID,
+                "recall_memory",
+                MemoryReadonly::NAME,
+                Default::default(),
+            )
+            .unwrap();
+        let err = Tool::<BaseCtx>::call(
+            &readonly,
+            err_ctx,
+            anda_kip::Request {
+                command: "NOT A VALID KIP COMMAND".to_string(),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+        assert_eq!(err.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn maintenance_rejects_concurrent_runs() {
+        let app = test_app_state_with_slow_model("maintenance_concurrent");
+        let space = create_loaded_space(&app, "maintenance_concurrent").await;
+
+        let first = space
+            .maintenance(
+                SELF_USER_ID,
+                MaintenanceInput {
+                    scope: MaintenanceScope::Quick,
+                    formation_id: 1,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert!(first.conversation.is_some());
+
+        let second = space
+            .maintenance(
+                SELF_USER_ID,
+                MaintenanceInput {
+                    scope: MaintenanceScope::Quick,
+                    formation_id: 2,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert!(second.content.contains("already in progress"));
+
+        wait_until_idle(&space).await;
+    }
+
+    #[tokio::test]
+    async fn hooks_handle_unbound_space_and_accumulate_usage() {
+        let app = test_app_state_with_final_model("hooks_usage");
+        let space = create_loaded_space(&app, "hooks_usage").await;
+        let unbound = Hooks::new(space.db.clone());
+
+        assert!(!BrainHook::is_maintenance_processing(&unbound));
+        BrainHook::try_start_formation(&unbound).await;
+        assert!(
+            BrainHook::try_start_maintenance(&unbound, 168)
+                .await
+                .is_none()
+        );
+
+        let hooks = Hooks::new(space.db.clone());
+        hooks.bind_space(Arc::downgrade(&space));
+        assert!(!BrainHook::is_maintenance_processing(&hooks));
+        space
+            .memory
+            .conversations
+            .save_extension("brain_processed".to_string(), 7_u64.into())
+            .await
+            .unwrap();
+        BrainHook::try_start_formation(&hooks).await;
+
+        let conversation = Conversation {
+            usage: Usage {
+                input_tokens: 11,
+                output_tokens: 7,
+                cached_tokens: 3,
+                requests: 2,
+            },
+            ..Default::default()
+        };
+
+        BrainHook::on_conversation_end(&hooks, "recall_memory", &conversation).await;
+        BrainHook::on_conversation_end(&hooks, "formation_memory", &conversation).await;
+        BrainHook::on_conversation_end(&hooks, "maintenance_memory", &conversation).await;
+        BrainHook::on_conversation_end(&hooks, "unknown_agent", &conversation).await;
+
+        let info = space.get_info();
+        assert_eq!(info.recall_usage.requests, 2);
+        assert_eq!(info.formation_usage.input_tokens, 11);
+        assert_eq!(info.maintenance_usage.output_tokens, 7);
+        assert_eq!(info.maintenance_usage.cached_tokens, 3);
+    }
+
+    #[tokio::test]
+    async fn hooks_schedule_maintenance_at_thresholds() {
+        let app = test_app_state_with_final_model("hooks_thresholds");
+        let space = create_loaded_space(&app, "hooks_thresholds").await;
+        let hooks = Hooks::new(space.db.clone());
+        hooks.bind_space(Arc::downgrade(&space));
+
+        assert!(BrainHook::try_start_maintenance(&hooks, 20).await.is_none());
+
+        space
+            .memory
+            .conversations
+            .save_extension("brain_processed".to_string(), 21_u64.into())
+            .await
+            .unwrap();
+        let daydream = BrainHook::try_start_maintenance(&hooks, 21).await.unwrap();
+        wait_until_idle(&space).await;
+        assert_eq!(space.maintenance_for_test().get_processed_at().daydream, 21);
+
+        space
+            .memory
+            .conversations
+            .save_extension("brain_processed".to_string(), 42_u64.into())
+            .await
+            .unwrap();
+        let quick = BrainHook::try_start_maintenance(&hooks, 42).await.unwrap();
+        wait_until_idle(&space).await;
+        assert!(quick > daydream);
+        assert_eq!(space.maintenance_for_test().get_processed_at().quick, 42);
+
+        space
+            .memory
+            .conversations
+            .save_extension("brain_processed".to_string(), 168_u64.into())
+            .await
+            .unwrap();
+        let full = BrainHook::try_start_maintenance(&hooks, 168).await.unwrap();
+        wait_until_idle(&space).await;
+        assert!(full > quick);
+        assert_eq!(space.maintenance_for_test().get_processed_at().full, 168);
     }
 }

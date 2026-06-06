@@ -561,10 +561,14 @@ pub struct GetOrInitUserInput {
 #[cfg(test)]
 mod tests {
     use super::{
-        FormationInput, InputContext, MaintenanceInput, MaintenanceScope, ModelConfig, RecallInput,
-        SpaceTier, SpaceToken, TokenScope,
+        CWToken, FormationInput, FormationInputRef, InputContext, MaintenanceInput,
+        MaintenanceScope, ModelConfig, RecallInput, RecallInputRef, SpaceTier, SpaceToken,
+        TokenScope,
     };
+    use anda_core::Principal;
     use anda_engine::model::ModelConfig as EngineModelConfig;
+    use coset::{cbor::value::Value, cwt::ClaimsSetBuilder};
+    use ic_cose_types::cose::iana;
     use serde_json::json;
     use std::str::FromStr;
 
@@ -602,6 +606,41 @@ mod tests {
         assert!(TokenScope::Read.allows(TokenScope::Read));
         assert!(!TokenScope::Read.allows(TokenScope::Write));
         assert!(TokenScope::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn cw_token_extracts_user_audience_and_scope_from_claims() {
+        let user = Principal::from_slice(&[42]);
+        let claims = ClaimsSetBuilder::new()
+            .subject(user.to_string())
+            .audience("memory-space".to_string())
+            .claim(iana::CwtClaimName::Scope, Value::Text("write".to_string()))
+            .build();
+
+        let token = CWToken::from_claims(claims).unwrap();
+        assert_eq!(token.user, user);
+        assert_eq!(token.audience, "memory-space");
+        assert_eq!(token.scope, TokenScope::Write);
+    }
+
+    #[test]
+    fn cw_token_rejects_missing_or_invalid_claims() {
+        let missing_subject = ClaimsSetBuilder::new()
+            .claim(iana::CwtClaimName::Scope, Value::Text("read".to_string()))
+            .build();
+        assert!(CWToken::from_claims(missing_subject).is_err());
+
+        let invalid_scope = ClaimsSetBuilder::new()
+            .subject(Principal::from_slice(&[1]).to_string())
+            .claim(iana::CwtClaimName::Scope, Value::Text("admin".to_string()))
+            .build();
+        assert!(CWToken::from_claims(invalid_scope).is_err());
+
+        let invalid_subject = ClaimsSetBuilder::new()
+            .subject("not a principal".to_string())
+            .claim(iana::CwtClaimName::Scope, Value::Text("*".to_string()))
+            .build();
+        assert!(CWToken::from_claims(invalid_subject).is_err());
     }
 
     #[test]
@@ -783,6 +822,48 @@ mod tests {
 
         let input: RecallInput = serde_json::from_str(r#"{"query":"x","context":"null"}"#).unwrap();
         assert_eq!(input.context, Some(InputContext::default()));
+    }
+
+    #[test]
+    fn input_context_rejects_json_strings_that_are_not_objects() {
+        for context in ["[1,2,3]", "\"[1,2,3]\""] {
+            let err = serde_json::from_value::<RecallInput>(json!({
+                "query": "bad context",
+                "context": context,
+            }))
+            .unwrap_err();
+
+            assert!(
+                err.to_string()
+                    .contains("context string must contain a JSON object")
+            );
+        }
+    }
+
+    #[test]
+    fn input_refs_borrow_request_fields_without_reencoding() {
+        let recall = RecallInput {
+            query: "find user preferences".to_string(),
+            context: Some(InputContext {
+                counterparty: Some("alice".to_string()),
+                ..Default::default()
+            }),
+        };
+        let recall_ref = RecallInputRef::from(&recall);
+
+        assert_eq!(recall_ref.query, recall.query);
+        assert_eq!(recall_ref.context, &recall.context);
+
+        let formation = FormationInput {
+            messages: Vec::new(),
+            context: recall.context.clone(),
+            timestamp: Some("2026-06-05T00:00:00Z".to_string()),
+        };
+        let formation_ref = FormationInputRef::from(&formation);
+
+        assert!(formation_ref.messages.is_empty());
+        assert_eq!(formation_ref.context, &formation.context);
+        assert_eq!(formation_ref.timestamp, &formation.timestamp);
     }
 
     #[test]

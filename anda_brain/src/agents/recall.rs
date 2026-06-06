@@ -414,6 +414,142 @@ impl Agent<AgentCtx> for RecallAgent {
 #[cfg(test)]
 mod tests {
     use super::{FUNCTION_DEFINITION, READONLY_KIP_TIMEOUT, RecallAgent};
+    use crate::{
+        agents::SELF_USER_ID,
+        space::AppState,
+        types::{InputContext, RecallInput},
+    };
+    use anda_core::{
+        Agent, AgentOutput, BoxError, BoxPinFut, CompletionRequest, Message, Principal,
+    };
+    use anda_db::{database::DBConfig, storage::StorageConfig};
+    use anda_engine::{
+        context::AgentCtx,
+        management::{BaseManagement, Visibility},
+        memory::ConversationStatus,
+        model::{CompletionFeaturesDyn, Model, Models, reqwest},
+    };
+    use object_store::memory::InMemory;
+    use std::{collections::BTreeSet, sync::Arc};
+
+    #[derive(Debug)]
+    struct FinalCompleter;
+
+    impl CompletionFeaturesDyn for FinalCompleter {
+        fn model_name(&self) -> String {
+            "recall-final-test-model".to_string()
+        }
+
+        fn completion(&self, req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            Box::pin(async move {
+                Ok(AgentOutput {
+                    content: "answer".to_string(),
+                    chat_history: vec![Message {
+                        role: "assistant".to_string(),
+                        content: vec![format!("answered: {}", req.prompt).into()],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                })
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    struct FailedReasonCompleter;
+
+    impl CompletionFeaturesDyn for FailedReasonCompleter {
+        fn model_name(&self) -> String {
+            "recall-failed-reason-test-model".to_string()
+        }
+
+        fn completion(&self, _req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            Box::pin(async move {
+                Ok(AgentOutput {
+                    failed_reason: Some("recall failed".to_string()),
+                    chat_history: vec![Message {
+                        role: "assistant".to_string(),
+                        content: vec!["recall failure".to_string().into()],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                })
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    struct ErrorCompleter;
+
+    impl CompletionFeaturesDyn for ErrorCompleter {
+        fn model_name(&self) -> String {
+            "recall-error-test-model".to_string()
+        }
+
+        fn completion(&self, _req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            Box::pin(async move { Err("model error".into()) })
+        }
+    }
+
+    fn test_db_config(name: &str) -> DBConfig {
+        DBConfig {
+            name: name.to_string(),
+            description: "test database".to_string(),
+            storage: StorageConfig::default(),
+            lock: None,
+        }
+    }
+
+    fn test_app_state_with_completer<C>(name: &str, completer: C) -> AppState
+    where
+        C: CompletionFeaturesDyn,
+    {
+        let models = Models::default();
+        models.set_model(Model::with_completer(Arc::new(completer)));
+        let management = Arc::new(BaseManagement {
+            controller: SELF_USER_ID,
+            managers: BTreeSet::new(),
+            visibility: Visibility::Public,
+        });
+        let http_client = reqwest::Client::builder().build().unwrap();
+
+        AppState::new(
+            Arc::new(InMemory::new()),
+            Arc::new(test_db_config(name)),
+            management,
+            http_client,
+            Arc::new(models),
+            Arc::new(vec![]),
+            "anda_brain".to_string(),
+            "test".to_string(),
+            0,
+        )
+    }
+
+    async fn create_loaded_space(app: &AppState, id: &str) -> Arc<crate::space::Space> {
+        app.admin_create_space(
+            Principal::from_slice(&[1]),
+            Principal::from_slice(&[2]),
+            id.to_string(),
+            1,
+            123,
+        )
+        .await
+        .unwrap();
+
+        app.load_space(id, false).await.unwrap()
+    }
+
+    fn recall_prompt(query: &str, counterparty: Option<&str>) -> String {
+        serde_json::to_string(&RecallInput {
+            query: query.to_string(),
+            context: counterparty.map(|counterparty| InputContext {
+                counterparty: Some(counterparty.to_string()),
+                ..Default::default()
+            }),
+        })
+        .unwrap()
+    }
 
     #[test]
     fn recall_function_definition_matches_agent_contract() {
@@ -440,5 +576,123 @@ mod tests {
     #[test]
     fn readonly_kip_timeout_stays_bounded() {
         assert_eq!(READONLY_KIP_TIMEOUT.as_secs(), 15);
+    }
+
+    #[tokio::test]
+    async fn recall_agent_trait_metadata_matches_function_definition() {
+        let app = test_app_state_with_completer("recall_trait_metadata", FinalCompleter);
+        let space = create_loaded_space(&app, "recall_trait_metadata").await;
+
+        assert_eq!(
+            Agent::<AgentCtx>::name(space.recall.as_ref()),
+            RecallAgent::NAME
+        );
+        assert_eq!(
+            Agent::<AgentCtx>::description(space.recall.as_ref()),
+            FUNCTION_DEFINITION.description
+        );
+        assert_eq!(
+            Agent::<AgentCtx>::definition(space.recall.as_ref()).name,
+            RecallAgent::NAME
+        );
+        let tools = Agent::<AgentCtx>::tool_dependencies(space.recall.as_ref());
+        assert!(tools.iter().any(|name| name == "execute_kip_readonly"));
+        assert!(tools.iter().any(|name| name == "note"));
+    }
+
+    #[tokio::test]
+    async fn recall_run_uses_history_and_tolerates_missing_counterparty_profile() {
+        let app = test_app_state_with_completer("recall_history", FinalCompleter);
+        let space = create_loaded_space(&app, "recall_history").await;
+        let ctx = space.ctx_for_test(SELF_USER_ID, RecallAgent::NAME).unwrap();
+
+        let first = Agent::<AgentCtx>::run(
+            space.recall.as_ref(),
+            ctx.clone(),
+            recall_prompt("what is remembered?", None),
+            vec![],
+        )
+        .await
+        .unwrap();
+        assert_eq!(first.conversation, Some(1));
+
+        let second = Agent::<AgentCtx>::run(
+            space.recall.as_ref(),
+            ctx,
+            recall_prompt("what about this missing person?", Some("missing-person")),
+            vec![],
+        )
+        .await
+        .unwrap();
+        assert_eq!(second.conversation, Some(2));
+
+        let stored = space
+            .get_conversation(Some("recall".to_string()), 2)
+            .await
+            .unwrap();
+        assert_eq!(stored.status, ConversationStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn recall_run_persists_model_failed_reason_and_model_errors() {
+        let app = test_app_state_with_completer("recall_failed_reason", FailedReasonCompleter);
+        let space = create_loaded_space(&app, "recall_failed_reason").await;
+        let ctx = space.ctx_for_test(SELF_USER_ID, RecallAgent::NAME).unwrap();
+        let output = Agent::<AgentCtx>::run(
+            space.recall.as_ref(),
+            ctx,
+            recall_prompt("fail this recall", None),
+            vec![],
+        )
+        .await
+        .unwrap();
+        let conversation_id = output.conversation.unwrap();
+        let stored = space
+            .get_conversation(Some("recall".to_string()), conversation_id)
+            .await
+            .unwrap();
+        assert_eq!(stored.status, ConversationStatus::Failed);
+        assert_eq!(stored.failed_reason.as_deref(), Some("recall failed"));
+
+        let app = test_app_state_with_completer("recall_model_error", ErrorCompleter);
+        let space = create_loaded_space(&app, "recall_model_error").await;
+        let ctx = space.ctx_for_test(SELF_USER_ID, RecallAgent::NAME).unwrap();
+        let err = Agent::<AgentCtx>::run(
+            space.recall.as_ref(),
+            ctx,
+            recall_prompt("error this recall", None),
+            vec![],
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("model error"));
+
+        let stored = space
+            .get_conversation(Some("recall".to_string()), 1)
+            .await
+            .unwrap();
+        assert_eq!(stored.status, ConversationStatus::Failed);
+        assert!(
+            stored
+                .failed_reason
+                .as_deref()
+                .unwrap()
+                .contains("model error")
+        );
+    }
+
+    #[tokio::test]
+    async fn recall_run_rejects_oversized_input_before_persisting() {
+        let app = test_app_state_with_completer("recall_input_too_large", FinalCompleter);
+        let space = create_loaded_space(&app, "recall_input_too_large").await;
+        let ctx = space.ctx_for_test(SELF_USER_ID, RecallAgent::NAME).unwrap();
+        let prompt = "x ".repeat(1_000_000);
+
+        let err = Agent::<AgentCtx>::run(space.recall.as_ref(), ctx, prompt, vec![])
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("Input too large"));
+        assert_eq!(space.recall.conversations.conversations.len(), 0);
     }
 }

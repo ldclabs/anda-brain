@@ -358,10 +358,169 @@ impl MaintenanceAgent {
 #[cfg(test)]
 mod tests {
     use super::{MaintenanceAgent, ProcessingGuard};
+    use crate::{
+        agents::SELF_USER_ID,
+        space::AppState,
+        types::{MaintenanceInput, MaintenanceScope},
+    };
+    use anda_core::{
+        Agent, AgentOutput, BoxError, BoxPinFut, CompletionRequest, Message, Principal,
+    };
+    use anda_db::{database::DBConfig, storage::StorageConfig};
+    use anda_engine::{
+        context::AgentCtx,
+        management::{BaseManagement, Visibility},
+        memory::{Conversation, ConversationRef, ConversationStatus},
+        model::{CompletionFeaturesDyn, Model, Models, reqwest},
+        unix_ms,
+    };
+    use object_store::memory::InMemory;
+    use serde_json::json;
+    use std::collections::BTreeSet;
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     };
+
+    #[derive(Debug)]
+    struct FinalCompleter;
+
+    impl CompletionFeaturesDyn for FinalCompleter {
+        fn model_name(&self) -> String {
+            "maintenance-final-test-model".to_string()
+        }
+
+        fn completion(&self, req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            Box::pin(async move {
+                Ok(AgentOutput {
+                    content: "maintained".to_string(),
+                    chat_history: vec![Message {
+                        role: "assistant".to_string(),
+                        content: vec![format!("maintained: {}", req.prompt).into()],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                })
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    struct FailedReasonCompleter;
+
+    impl CompletionFeaturesDyn for FailedReasonCompleter {
+        fn model_name(&self) -> String {
+            "maintenance-failed-reason-test-model".to_string()
+        }
+
+        fn completion(&self, _req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            Box::pin(async move {
+                Ok(AgentOutput {
+                    failed_reason: Some("maintenance failed".to_string()),
+                    chat_history: vec![Message {
+                        role: "assistant".to_string(),
+                        content: vec!["maintenance failure".to_string().into()],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                })
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    struct ErrorCompleter;
+
+    impl CompletionFeaturesDyn for ErrorCompleter {
+        fn model_name(&self) -> String {
+            "maintenance-error-test-model".to_string()
+        }
+
+        fn completion(&self, _req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            Box::pin(async move { Err("model error".into()) })
+        }
+    }
+
+    fn test_db_config(name: &str) -> DBConfig {
+        DBConfig {
+            name: name.to_string(),
+            description: "test database".to_string(),
+            storage: StorageConfig::default(),
+            lock: None,
+        }
+    }
+
+    fn test_app_state_with_completer<C>(name: &str, completer: C) -> AppState
+    where
+        C: CompletionFeaturesDyn,
+    {
+        let models = Models::default();
+        models.set_model(Model::with_completer(Arc::new(completer)));
+        let management = Arc::new(BaseManagement {
+            controller: SELF_USER_ID,
+            managers: BTreeSet::new(),
+            visibility: Visibility::Public,
+        });
+        let http_client = reqwest::Client::builder().build().unwrap();
+
+        AppState::new(
+            Arc::new(InMemory::new()),
+            Arc::new(test_db_config(name)),
+            management,
+            http_client,
+            Arc::new(models),
+            Arc::new(vec![]),
+            "anda_brain".to_string(),
+            "test".to_string(),
+            0,
+        )
+    }
+
+    async fn create_loaded_space(app: &AppState, id: &str) -> Arc<crate::space::Space> {
+        app.admin_create_space(
+            Principal::from_slice(&[1]),
+            Principal::from_slice(&[2]),
+            id.to_string(),
+            1,
+            123,
+        )
+        .await
+        .unwrap();
+
+        app.load_space(id, false).await.unwrap()
+    }
+
+    fn maintenance_prompt(scope: MaintenanceScope) -> String {
+        serde_json::to_string(&MaintenanceInput {
+            scope,
+            formation_id: 99,
+            ..Default::default()
+        })
+        .unwrap()
+    }
+
+    async fn stored_conversation(
+        agent: &MaintenanceAgent,
+        messages: Vec<serde_json::Value>,
+    ) -> Conversation {
+        let now = unix_ms();
+        let mut conversation = Conversation {
+            user: SELF_USER_ID,
+            status: ConversationStatus::Submitted,
+            messages,
+            label: Some("maintenance".to_string()),
+            created_at: now,
+            updated_at: now,
+            ..Default::default()
+        };
+        let id = agent
+            .conversations
+            .add_conversation(ConversationRef::from(&conversation))
+            .await
+            .unwrap();
+        conversation._id = id;
+        conversation
+    }
 
     #[test]
     fn processing_guard_resets_processing_flag_on_drop() {
@@ -378,5 +537,148 @@ mod tests {
     #[test]
     fn maintenance_agent_name_matches_registered_agent_name() {
         assert_eq!(MaintenanceAgent::NAME, "maintenance_memory");
+    }
+
+    #[tokio::test]
+    async fn maintenance_agent_trait_metadata_and_processed_markers() {
+        let app = test_app_state_with_completer("maintenance_trait", FinalCompleter);
+        let space = create_loaded_space(&app, "maintenance_trait").await;
+        let maintenance = space.maintenance_for_test();
+
+        assert_eq!(
+            Agent::<AgentCtx>::name(maintenance.as_ref()),
+            MaintenanceAgent::NAME
+        );
+        assert!(Agent::<AgentCtx>::description(maintenance.as_ref()).contains("Sleep Mode"));
+        let tools = Agent::<AgentCtx>::tool_dependencies(maintenance.as_ref());
+        assert!(tools.iter().any(|name| name == "execute_kip"));
+        assert!(tools.iter().any(|name| name == "note"));
+        assert_eq!(maintenance.get_processed(), None);
+
+        maintenance
+            .set_processed_at(MaintenanceScope::Quick, 7)
+            .await
+            .unwrap();
+        assert_eq!(maintenance.get_processed_at().quick, 7);
+    }
+
+    #[tokio::test]
+    async fn mark_conversation_failed_persists_status_and_reason() {
+        let app = test_app_state_with_completer("maintenance_mark_failed", FinalCompleter);
+        let space = create_loaded_space(&app, "maintenance_mark_failed").await;
+        let maintenance = space.maintenance_for_test();
+        let mut conversation = stored_conversation(&maintenance, vec![]).await;
+
+        maintenance
+            .mark_conversation_failed(&mut conversation, "boom".to_string())
+            .await;
+
+        assert_eq!(conversation.status, ConversationStatus::Failed);
+        assert_eq!(conversation.failed_reason.as_deref(), Some("boom"));
+        let stored = maintenance
+            .conversations
+            .get_conversation(conversation._id)
+            .await
+            .unwrap();
+        assert_eq!(stored.status, ConversationStatus::Failed);
+        assert_eq!(stored.failed_reason.as_deref(), Some("boom"));
+    }
+
+    #[tokio::test]
+    async fn process_one_marks_missing_prompt_and_completion_errors() {
+        let app = test_app_state_with_completer("maintenance_no_prompt", FinalCompleter);
+        let space = create_loaded_space(&app, "maintenance_no_prompt").await;
+        let maintenance = space.maintenance_for_test();
+        let ctx = space
+            .ctx_for_test(SELF_USER_ID, MaintenanceAgent::NAME)
+            .unwrap();
+        let mut no_prompt = stored_conversation(&maintenance, vec![]).await;
+
+        maintenance.process_one(&ctx, &mut no_prompt).await;
+
+        assert_eq!(no_prompt.status, ConversationStatus::Failed);
+        assert_eq!(no_prompt.failed_reason.as_deref(), Some("No prompt found"));
+
+        let app = test_app_state_with_completer("maintenance_model_error", ErrorCompleter);
+        let space = create_loaded_space(&app, "maintenance_model_error").await;
+        let maintenance = space.maintenance_for_test();
+        let ctx = space
+            .ctx_for_test(SELF_USER_ID, MaintenanceAgent::NAME)
+            .unwrap();
+        let mut conversation = stored_conversation(
+            &maintenance,
+            vec![json!(Message {
+                role: "user".to_string(),
+                content: vec![maintenance_prompt(MaintenanceScope::Quick).into()],
+                ..Default::default()
+            })],
+        )
+        .await;
+
+        maintenance.process_one(&ctx, &mut conversation).await;
+
+        assert_eq!(conversation.status, ConversationStatus::Failed);
+        assert!(
+            conversation
+                .failed_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("CompletionRunner error")
+        );
+    }
+
+    #[tokio::test]
+    async fn process_one_uses_history_and_persists_failed_reason() {
+        let app = test_app_state_with_completer("maintenance_history", FinalCompleter);
+        let space = create_loaded_space(&app, "maintenance_history").await;
+        let maintenance = space.maintenance_for_test();
+        let ctx = space
+            .ctx_for_test(SELF_USER_ID, MaintenanceAgent::NAME)
+            .unwrap();
+
+        let mut first = stored_conversation(
+            &maintenance,
+            vec![json!(Message {
+                role: "user".to_string(),
+                content: vec![maintenance_prompt(MaintenanceScope::Quick).into()],
+                ..Default::default()
+            })],
+        )
+        .await;
+        maintenance.process_one(&ctx, &mut first).await;
+        assert_eq!(first.status, ConversationStatus::Completed);
+
+        let mut second = stored_conversation(
+            &maintenance,
+            vec![json!(Message {
+                role: "user".to_string(),
+                content: vec![maintenance_prompt(MaintenanceScope::Full).into()],
+                ..Default::default()
+            })],
+        )
+        .await;
+        maintenance.process_one(&ctx, &mut second).await;
+        assert_eq!(second.status, ConversationStatus::Completed);
+
+        let app = test_app_state_with_completer("maintenance_failed_reason", FailedReasonCompleter);
+        let space = create_loaded_space(&app, "maintenance_failed_reason").await;
+        let maintenance = space.maintenance_for_test();
+        let ctx = space
+            .ctx_for_test(SELF_USER_ID, MaintenanceAgent::NAME)
+            .unwrap();
+        let mut failed = stored_conversation(
+            &maintenance,
+            vec![json!(Message {
+                role: "user".to_string(),
+                content: vec![maintenance_prompt(MaintenanceScope::Daydream).into()],
+                ..Default::default()
+            })],
+        )
+        .await;
+
+        maintenance.process_one(&ctx, &mut failed).await;
+
+        assert_eq!(failed.status, ConversationStatus::Failed);
+        assert_eq!(failed.failed_reason.as_deref(), Some("maintenance failed"));
     }
 }

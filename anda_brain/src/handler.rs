@@ -859,7 +859,193 @@ fn markdown_to_html(md: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::markdown_to_html;
+    use super::{
+        add_space_token, apple_touch_icon, create_space, execute_kip_readonly, favicon, get_byok,
+        get_conversation, get_conversation_delta, get_formation_status, get_info, get_information,
+        get_or_init_user, get_skill, get_website, list_conversations, list_space_tokens,
+        markdown_to_html, post_formation, post_maintenance, post_recall, restart_formation,
+        revoke_space_token, update_byok, update_space, update_space_tier,
+    };
+    use crate::{
+        agents::SELF_USER_ID,
+        payload::{Accept, AppError, HeaderVals, PayloadFormat},
+        space::{AppState, Space},
+        types::{
+            AddSpaceTokenInput, ConversationDeltaQuery, CreateOrUpdateSpaceInput, FormationInput,
+            FormationRestartInput, GetOrInitUserInput, InputContext, MaintenanceInput,
+            MaintenanceScope, ModelConfig, Pagination, RecallInput, RevokeSpaceTokenInput,
+            TokenScope, UpdateSpaceInput,
+        },
+    };
+    use anda_core::{AgentOutput, BoxError, BoxPinFut, CompletionRequest, Message, Principal};
+    use anda_db::{database::DBConfig, storage::StorageConfig};
+    use anda_engine::{
+        management::{BaseManagement, Visibility},
+        memory::{Conversation, ConversationRef, ConversationStatus},
+        model::{CompletionFeaturesDyn, Model, Models, reqwest},
+        unix_ms,
+    };
+    use axum::{
+        body::{Bytes, to_bytes},
+        extract::{Path, Query, State},
+        http::{HeaderMap, StatusCode, header},
+        response::{IntoResponse, Response},
+    };
+    use ic_cose_types::cose::ed25519::VerifyingKey;
+    use object_store::memory::InMemory;
+    use serde::Serialize;
+    use serde_json::{Value, json};
+    use std::{collections::BTreeSet, sync::Arc};
+
+    #[derive(Debug)]
+    struct FinalCompleter;
+
+    impl CompletionFeaturesDyn for FinalCompleter {
+        fn model_name(&self) -> String {
+            "handler-test-model".to_string()
+        }
+
+        fn completion(&self, req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            Box::pin(async move {
+                Ok(AgentOutput {
+                    content: "handler done".to_string(),
+                    chat_history: vec![Message {
+                        role: "assistant".to_string(),
+                        content: vec![format!("handler processed: {}", req.prompt).into()],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                })
+            })
+        }
+    }
+
+    fn test_db_config(name: &str) -> DBConfig {
+        DBConfig {
+            name: name.to_string(),
+            description: "test database".to_string(),
+            storage: StorageConfig::default(),
+            lock: None,
+        }
+    }
+
+    fn test_app_state(name: &str, sharding: u32) -> AppState {
+        test_app_state_with_pubkeys(name, sharding, vec![])
+    }
+
+    fn test_app_state_with_auth_enabled(name: &str, sharding: u32) -> AppState {
+        let mut bytes = [0x66; 32];
+        bytes[0] = 0x58;
+        let key = VerifyingKey::from_bytes(&bytes).unwrap();
+        test_app_state_with_pubkeys(name, sharding, vec![key])
+    }
+
+    fn test_app_state_with_pubkeys(
+        name: &str,
+        sharding: u32,
+        pubkeys: Vec<VerifyingKey>,
+    ) -> AppState {
+        let management = Arc::new(BaseManagement {
+            controller: SELF_USER_ID,
+            managers: BTreeSet::new(),
+            visibility: Visibility::Public,
+        });
+        let http_client = reqwest::Client::builder().build().unwrap();
+        let models = Models::default();
+        models.set_model(Model::with_completer(Arc::new(FinalCompleter)));
+
+        AppState::new(
+            Arc::new(InMemory::new()),
+            Arc::new(test_db_config(name)),
+            management,
+            http_client,
+            Arc::new(models),
+            Arc::new(pubkeys),
+            "anda_brain".to_string(),
+            "test-version".to_string(),
+            sharding,
+        )
+    }
+
+    async fn create_loaded_space(app: &AppState, id: &str) -> Arc<Space> {
+        app.admin_create_space(
+            Principal::from_slice(&[1]),
+            Principal::from_slice(&[2]),
+            id.to_string(),
+            1,
+            unix_ms(),
+        )
+        .await
+        .unwrap();
+
+        app.load_space(id, false).await.unwrap()
+    }
+
+    fn accept_from_headers(
+        accept: Option<&str>,
+        content_type: Option<&str>,
+        lang: Option<&str>,
+    ) -> Accept {
+        let mut headers = HeaderMap::new();
+        if let Some(value) = accept {
+            headers.insert(header::ACCEPT, value.parse().unwrap());
+        }
+        if let Some(value) = content_type {
+            headers.insert(header::CONTENT_TYPE, value.parse().unwrap());
+        }
+        if let Some(value) = lang {
+            headers.insert(header::ACCEPT_LANGUAGE, value.parse().unwrap());
+        }
+
+        let is_cn = lang
+            .map(|value| value.to_ascii_lowercase().contains("zh"))
+            .unwrap_or(false);
+        Accept(PayloadFormat::from_headers(&headers), is_cn)
+    }
+
+    fn accept_json() -> Accept {
+        accept_from_headers(Some("application/json"), Some("application/json"), None)
+    }
+
+    fn headers(app: &AppState) -> HeaderVals {
+        HeaderVals(String::new(), app.sharding)
+    }
+
+    fn json_bytes<T: Serialize>(value: &T) -> Bytes {
+        Bytes::from(serde_json::to_vec(value).unwrap())
+    }
+
+    async fn response_text(response: Response) -> String {
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    async fn response_json(response: Response) -> Value {
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    async fn ok_json<T: IntoResponse>(result: Result<T, AppError>) -> Value {
+        match result {
+            Ok(value) => {
+                let response = value.into_response();
+                assert_eq!(response.status(), StatusCode::OK);
+                response_json(response).await
+            }
+            Err(err) => panic!("unexpected error: {}", err.message),
+        }
+    }
+
+    async fn err_json<T: IntoResponse>(result: Result<T, AppError>, status: StatusCode) -> Value {
+        match result {
+            Ok(_) => panic!("expected handler error"),
+            Err(err) => {
+                let response = err.into_response();
+                assert_eq!(response.status(), status);
+                response_json(response).await
+            }
+        }
+    }
 
     #[test]
     fn markdown_to_html_renders_gfm_tables() {
@@ -876,5 +1062,1061 @@ mod tests {
 
         assert!(html.contains("<h1>Title</h1>"));
         assert!(html.contains("<span data-kind=\"raw\">ok</span>"));
+    }
+
+    #[tokio::test]
+    async fn static_and_information_handlers_return_expected_formats() {
+        let app = test_app_state("handler_static", 9);
+
+        let favicon = favicon().await;
+        assert_eq!(favicon.status(), StatusCode::OK);
+        assert_eq!(
+            favicon.headers().get(header::CONTENT_TYPE).unwrap(),
+            "image/x-icon"
+        );
+
+        let icon = apple_touch_icon().await;
+        assert_eq!(icon.status(), StatusCode::OK);
+        assert_eq!(
+            icon.headers().get(header::CONTENT_TYPE).unwrap(),
+            "image/webp"
+        );
+
+        let info = get_information(State(app.clone())).await.into_response();
+        let info = response_json(info).await;
+        assert_eq!(info["name"], "anda_brain");
+        assert_eq!(info["version"], "test-version");
+        assert_eq!(info["sharding"], 9);
+
+        let skill = get_skill(State(app)).await.into_response();
+        assert_eq!(
+            skill.headers().get(header::CONTENT_TYPE).unwrap(),
+            "text/markdown; charset=utf-8"
+        );
+        let skill_text = response_text(skill).await;
+        assert!(skill_text.contains("Anda Brain"));
+
+        let website_md = get_website(accept_from_headers(Some("text/markdown"), None, None)).await;
+        assert_eq!(
+            website_md.headers().get(header::CONTENT_TYPE).unwrap(),
+            "text/markdown; charset=utf-8"
+        );
+        assert!(response_text(website_md).await.contains("Anda Brain"));
+
+        let website_cn = get_website(accept_from_headers(
+            Some("text/html"),
+            None,
+            Some("zh-CN,en"),
+        ))
+        .await;
+        let website_cn = response_text(website_cn).await;
+        assert!(website_cn.contains("<html lang=\"zh-CN\""));
+    }
+
+    #[tokio::test]
+    async fn admin_and_management_handlers_cover_space_lifecycle() {
+        let app = test_app_state("handler_lifecycle", 3);
+        let owner = Principal::from_slice(&[11]);
+        let space_id = "handler_lifecycle_space".to_string();
+        let create_input = CreateOrUpdateSpaceInput {
+            user: owner,
+            space_id: space_id.clone(),
+            tier: 2,
+        };
+
+        let created = ok_json(
+            create_space(
+                State(app.clone()),
+                accept_json(),
+                headers(&app),
+                json_bytes(&create_input),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(created["result"]["id"], space_id);
+        assert_eq!(created["result"]["owner"], owner.to_string());
+
+        let info = ok_json(
+            get_info(
+                State(app.clone()),
+                Path(space_id.clone()),
+                accept_json(),
+                headers(&app),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(info["result"]["tier"]["tier"], 2);
+
+        let update_input = UpdateSpaceInput {
+            name: Some("Handler Brain".to_string()),
+            description: Some("handler coverage".to_string()),
+            public: Some(true),
+        };
+        let updated = ok_json(
+            update_space(
+                State(app.clone()),
+                Path(space_id.clone()),
+                accept_json(),
+                headers(&app),
+                json_bytes(&update_input),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(updated["result"], true);
+
+        let info = ok_json(
+            get_info(
+                State(app.clone()),
+                Path(space_id.clone()),
+                accept_json(),
+                HeaderVals("not-a-token".to_string(), app.sharding),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(info["result"]["name"], "Handler Brain");
+        assert_eq!(info["result"]["public"], true);
+
+        let status = ok_json(
+            get_formation_status(
+                State(app.clone()),
+                Path(space_id.clone()),
+                accept_json(),
+                headers(&app),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status["result"]["id"], space_id);
+        assert_eq!(status["result"]["formation_processing"], false);
+
+        let byok = ModelConfig {
+            family: "openai".to_string(),
+            model: "handler-model".to_string(),
+            api_base: "https://api.example.test".to_string(),
+            api_key: "test-key".to_string(),
+            ..Default::default()
+        };
+        let byok_updated = ok_json(
+            update_byok(
+                State(app.clone()),
+                Path(space_id.clone()),
+                accept_json(),
+                headers(&app),
+                json_bytes(&byok),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(byok_updated["result"], true);
+
+        let byok_result = ok_json(
+            get_byok(
+                State(app.clone()),
+                Path(space_id.clone()),
+                accept_json(),
+                headers(&app),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(byok_result["result"]["model"], "handler-model");
+
+        let token_input = AddSpaceTokenInput {
+            scope: TokenScope::Read,
+            name: "reader".to_string(),
+            expires_at: None,
+        };
+        let added = ok_json(
+            add_space_token(
+                State(app.clone()),
+                Path(space_id.clone()),
+                accept_json(),
+                headers(&app),
+                json_bytes(&token_input),
+            )
+            .await,
+        )
+        .await;
+        let space_token = added["result"]["token"].as_str().unwrap().to_string();
+        assert!(space_token.starts_with("ST"));
+
+        let tokens = ok_json(
+            list_space_tokens(
+                State(app.clone()),
+                Path(space_id.clone()),
+                accept_json(),
+                headers(&app),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(tokens["result"].as_array().unwrap().len(), 1);
+
+        let revoked = ok_json(
+            revoke_space_token(
+                State(app.clone()),
+                Path(space_id.clone()),
+                accept_json(),
+                headers(&app),
+                json_bytes(&RevokeSpaceTokenInput { token: space_token }),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(revoked["result"], true);
+
+        let mismatched_tier = err_json(
+            update_space_tier(
+                State(app.clone()),
+                Path(space_id.clone()),
+                accept_json(),
+                headers(&app),
+                json_bytes(&CreateOrUpdateSpaceInput {
+                    user: owner,
+                    space_id: "other_space".to_string(),
+                    tier: 4,
+                }),
+            )
+            .await,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+        assert!(
+            mismatched_tier["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("does not match")
+        );
+
+        let tier = ok_json(
+            update_space_tier(
+                State(app.clone()),
+                Path(space_id.clone()),
+                accept_json(),
+                headers(&app),
+                json_bytes(&CreateOrUpdateSpaceInput {
+                    user: owner,
+                    space_id: space_id.clone(),
+                    tier: 4,
+                }),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(tier["result"]["tier"], 4);
+
+        let sharding_err = err_json(
+            get_info(
+                State(app),
+                Path(space_id),
+                accept_json(),
+                HeaderVals(String::new(), 99),
+            )
+            .await,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+        assert!(
+            sharding_err["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("does not match")
+        );
+    }
+
+    #[tokio::test]
+    async fn handlers_reject_mismatched_sharding_consistently() {
+        let app = test_app_state("handler_sharding_errors", 5);
+        let owner = Principal::from_slice(&[13]);
+        let space_id = "handler_sharding_space".to_string();
+        let wrong = || HeaderVals(String::new(), 99);
+
+        let create_input = CreateOrUpdateSpaceInput {
+            user: owner,
+            space_id: space_id.clone(),
+            tier: 1,
+        };
+        let token_input = AddSpaceTokenInput {
+            scope: TokenScope::Read,
+            name: "reader".to_string(),
+            expires_at: None,
+        };
+        let update_input = UpdateSpaceInput {
+            name: Some("ignored".to_string()),
+            description: None,
+            public: None,
+        };
+
+        let info = err_json(
+            get_info(
+                State(app.clone()),
+                Path(space_id.clone()),
+                accept_json(),
+                wrong(),
+            )
+            .await,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+        assert!(
+            info["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("sharding")
+        );
+
+        let _ = err_json(
+            get_formation_status(
+                State(app.clone()),
+                Path(space_id.clone()),
+                accept_json(),
+                wrong(),
+            )
+            .await,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+        let _ = err_json(
+            post_formation(
+                State(app.clone()),
+                Path(space_id.clone()),
+                accept_json(),
+                wrong(),
+                Bytes::new(),
+            )
+            .await,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+        let _ = err_json(
+            post_recall(
+                State(app.clone()),
+                Path(space_id.clone()),
+                accept_json(),
+                wrong(),
+                Bytes::new(),
+            )
+            .await,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+        let _ = err_json(
+            post_maintenance(
+                State(app.clone()),
+                Path(space_id.clone()),
+                accept_json(),
+                wrong(),
+                Bytes::new(),
+            )
+            .await,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+        let _ = err_json(
+            execute_kip_readonly(
+                State(app.clone()),
+                Path(space_id.clone()),
+                accept_json(),
+                wrong(),
+                Bytes::new(),
+            )
+            .await,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+        let _ = err_json(
+            get_or_init_user(
+                State(app.clone()),
+                Path(space_id.clone()),
+                accept_json(),
+                wrong(),
+                Bytes::new(),
+            )
+            .await,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+        let _ = err_json(
+            get_conversation(
+                State(app.clone()),
+                Path((space_id.clone(), "1".to_string())),
+                Query(ConversationDeltaQuery {
+                    messages_offset: None,
+                    artifacts_offset: None,
+                    collection: None,
+                }),
+                accept_json(),
+                wrong(),
+            )
+            .await,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+        let _ = err_json(
+            get_conversation_delta(
+                State(app.clone()),
+                Path((space_id.clone(), "1".to_string())),
+                Query(ConversationDeltaQuery {
+                    messages_offset: None,
+                    artifacts_offset: None,
+                    collection: None,
+                }),
+                accept_json(),
+                wrong(),
+            )
+            .await,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+        let _ = err_json(
+            list_conversations(
+                State(app.clone()),
+                Path(space_id.clone()),
+                Query(Pagination {
+                    cursor: None,
+                    limit: None,
+                    collection: None,
+                }),
+                accept_json(),
+                wrong(),
+            )
+            .await,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+
+        let _ = err_json(
+            list_space_tokens(
+                State(app.clone()),
+                Path(space_id.clone()),
+                accept_json(),
+                wrong(),
+            )
+            .await,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+        let _ = err_json(
+            add_space_token(
+                State(app.clone()),
+                Path(space_id.clone()),
+                accept_json(),
+                wrong(),
+                json_bytes(&token_input),
+            )
+            .await,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+        let _ = err_json(
+            revoke_space_token(
+                State(app.clone()),
+                Path(space_id.clone()),
+                accept_json(),
+                wrong(),
+                json_bytes(&RevokeSpaceTokenInput {
+                    token: "STunused".to_string(),
+                }),
+            )
+            .await,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+        let _ = err_json(
+            update_space(
+                State(app.clone()),
+                Path(space_id.clone()),
+                accept_json(),
+                wrong(),
+                json_bytes(&update_input),
+            )
+            .await,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+        let _ = err_json(
+            restart_formation(
+                State(app.clone()),
+                Path(space_id.clone()),
+                accept_json(),
+                wrong(),
+                json_bytes(&FormationRestartInput { conversation: 1 }),
+            )
+            .await,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+        let _ = err_json(
+            get_byok(
+                State(app.clone()),
+                Path(space_id.clone()),
+                accept_json(),
+                wrong(),
+            )
+            .await,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+        let _ = err_json(
+            update_byok(
+                State(app.clone()),
+                Path(space_id.clone()),
+                accept_json(),
+                wrong(),
+                Bytes::new(),
+            )
+            .await,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+        let _ = err_json(
+            create_space(
+                State(app.clone()),
+                accept_json(),
+                wrong(),
+                json_bytes(&create_input),
+            )
+            .await,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+        let _ = err_json(
+            update_space_tier(
+                State(app),
+                Path(space_id),
+                accept_json(),
+                wrong(),
+                json_bytes(&create_input),
+            )
+            .await,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn conversation_handlers_read_collections_and_deltas() {
+        let app = test_app_state("handler_conversations", 0);
+        let space_id = "handler_conversations_space";
+        let space = create_loaded_space(&app, space_id).await;
+        let now = unix_ms();
+
+        let formation_id = space
+            .memory
+            .add_conversation(ConversationRef::from(&Conversation {
+                user: SELF_USER_ID,
+                status: ConversationStatus::Completed,
+                label: Some("formation".to_string()),
+                messages: vec![json!({"role": "user", "content": "hello"})],
+                created_at: now,
+                updated_at: now,
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+        let recall_id = space
+            .recall
+            .conversations
+            .add_conversation(ConversationRef::from(&Conversation {
+                user: SELF_USER_ID,
+                status: ConversationStatus::Completed,
+                label: Some("recall".to_string()),
+                created_at: now + 1,
+                updated_at: now + 1,
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+        let formation = ok_json(
+            get_conversation(
+                State(app.clone()),
+                Path((space_id.to_string(), formation_id.to_string())),
+                Query(ConversationDeltaQuery {
+                    messages_offset: None,
+                    artifacts_offset: None,
+                    collection: None,
+                }),
+                accept_json(),
+                headers(&app),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(formation["result"]["label"], "formation");
+
+        let delta = ok_json(
+            get_conversation_delta(
+                State(app.clone()),
+                Path((space_id.to_string(), formation_id.to_string())),
+                Query(ConversationDeltaQuery {
+                    messages_offset: Some(1),
+                    artifacts_offset: Some(0),
+                    collection: None,
+                }),
+                accept_json(),
+                headers(&app),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(delta["result"]["_id"], formation_id);
+        assert_eq!(delta["result"]["messages"].as_array().unwrap().len(), 0);
+
+        let recall = ok_json(
+            get_conversation(
+                State(app.clone()),
+                Path((space_id.to_string(), recall_id.to_string())),
+                Query(ConversationDeltaQuery {
+                    messages_offset: None,
+                    artifacts_offset: None,
+                    collection: Some("recall".to_string()),
+                }),
+                accept_json(),
+                headers(&app),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(recall["result"]["label"], "recall");
+
+        let listed = ok_json(
+            list_conversations(
+                State(app.clone()),
+                Path(space_id.to_string()),
+                Query(Pagination {
+                    cursor: None,
+                    limit: Some(1),
+                    collection: None,
+                }),
+                accept_json(),
+                headers(&app),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(listed["result"].as_array().unwrap().len(), 1);
+        assert!(listed["next_cursor"].is_string());
+
+        let invalid_id = err_json(
+            get_conversation(
+                State(app),
+                Path((space_id.to_string(), "not-a-number".to_string())),
+                Query(ConversationDeltaQuery {
+                    messages_offset: None,
+                    artifacts_offset: None,
+                    collection: None,
+                }),
+                accept_json(),
+                HeaderVals(String::new(), 0),
+            )
+            .await,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+        assert!(
+            invalid_id["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("invalid conversation_id")
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_handlers_cover_parse_auth_and_readonly_paths() {
+        let app = test_app_state("handler_runtime", 0);
+        let space_id = "handler_runtime_space";
+        let space = create_loaded_space(&app, space_id).await;
+        space
+            .update(
+                UpdateSpaceInput {
+                    name: None,
+                    description: None,
+                    public: Some(true),
+                },
+                unix_ms(),
+            )
+            .await
+            .unwrap();
+
+        let formation_ok = match post_formation(
+            State(app.clone()),
+            Path(space_id.to_string()),
+            accept_from_headers(Some("text/markdown"), Some("application/json"), None),
+            headers(&app),
+            json_bytes(&FormationInput {
+                messages: vec![Message {
+                    role: "user".to_string(),
+                    content: vec!["remember handler success".to_string().into()],
+                    ..Default::default()
+                }],
+                context: Some(InputContext {
+                    counterparty: Some("handler-user".to_string()),
+                    agent: Some("handler-agent".to_string()),
+                    source: Some("handler-source".to_string()),
+                    topic: Some("handler-topic".to_string()),
+                }),
+                timestamp: None,
+            }),
+        )
+        .await
+        {
+            Ok(response) => response.into_response(),
+            Err(err) => panic!("unexpected formation error: {}", err.message),
+        };
+        assert_eq!(formation_ok.status(), StatusCode::OK);
+        for _ in 0..100 {
+            if !space.is_processing() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(!space.is_processing());
+
+        let recall_ok = ok_json(
+            post_recall(
+                State(app.clone()),
+                Path(space_id.to_string()),
+                accept_json(),
+                headers(&app),
+                json_bytes(&RecallInput {
+                    query: "What did the handler remember?".to_string(),
+                    context: Some(InputContext {
+                        counterparty: Some("handler-user".to_string()),
+                        agent: None,
+                        source: None,
+                        topic: Some("handler-topic".to_string()),
+                    }),
+                }),
+            )
+            .await,
+        )
+        .await;
+        assert!(recall_ok["result"]["conversation"].is_number());
+
+        let maintenance_ok = ok_json(
+            post_maintenance(
+                State(app.clone()),
+                Path(space_id.to_string()),
+                accept_json(),
+                headers(&app),
+                json_bytes(&MaintenanceInput {
+                    scope: MaintenanceScope::Quick,
+                    formation_id: 1,
+                    ..Default::default()
+                }),
+            )
+            .await,
+        )
+        .await;
+        assert!(maintenance_ok["result"]["conversation"].is_number());
+
+        let formation_err = err_json(
+            post_formation(
+                State(app.clone()),
+                Path(space_id.to_string()),
+                accept_json(),
+                headers(&app),
+                Bytes::from_static(b"{"),
+            )
+            .await,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+        assert!(
+            formation_err["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("parse JSON error")
+        );
+
+        let recall_err = err_json(
+            post_recall(
+                State(app.clone()),
+                Path(space_id.to_string()),
+                accept_json(),
+                HeaderVals(String::new(), 1),
+                Bytes::from_static(b"{}"),
+            )
+            .await,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+        assert!(
+            recall_err["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("does not match")
+        );
+
+        let maintenance_err = err_json(
+            post_maintenance(
+                State(app.clone()),
+                Path(space_id.to_string()),
+                accept_from_headers(Some("application/json"), Some("text/markdown"), None),
+                headers(&app),
+                Bytes::from_static(b"not json"),
+            )
+            .await,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+        assert!(
+            maintenance_err["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("invalid input")
+        );
+
+        let kip = ok_json(
+            execute_kip_readonly(
+                State(app.clone()),
+                Path(space_id.to_string()),
+                accept_json(),
+                headers(&app),
+                Bytes::from_static(br#"{"command":"DESCRIBE PRIMER"}"#),
+            )
+            .await,
+        )
+        .await;
+        assert!(kip.as_object().is_some_and(|obj| !obj.is_empty()));
+
+        let user = ok_json(
+            get_or_init_user(
+                State(app),
+                Path(space_id.to_string()),
+                accept_json(),
+                HeaderVals(String::new(), 0),
+                json_bytes(&GetOrInitUserInput {
+                    user: "external-user-1".to_string(),
+                    name: Some("External User".to_string()),
+                }),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(user["result"]["type"], "Person");
+        assert!(user["result"].to_string().contains("external-user-1"));
+    }
+
+    #[tokio::test]
+    async fn runtime_handlers_accept_space_tokens_when_cw_auth_is_enabled() {
+        let app = test_app_state_with_auth_enabled("handler_space_token_auth", 0);
+        let space_id = "handler_space_token_auth_space";
+        let space = create_loaded_space(&app, space_id).await;
+        let read_token = "SThandler-read".to_string();
+        let write_token = "SThandler-write".to_string();
+        space
+            .add_space_token(
+                read_token.clone(),
+                AddSpaceTokenInput {
+                    scope: TokenScope::Read,
+                    name: "reader".to_string(),
+                    expires_at: None,
+                },
+                unix_ms(),
+            )
+            .await
+            .unwrap();
+        space
+            .add_space_token(
+                write_token.clone(),
+                AddSpaceTokenInput {
+                    scope: TokenScope::Write,
+                    name: "writer".to_string(),
+                    expires_at: None,
+                },
+                unix_ms(),
+            )
+            .await
+            .unwrap();
+
+        let unauthorized = err_json(
+            get_info(
+                State(app.clone()),
+                Path(space_id.to_string()),
+                accept_json(),
+                HeaderVals(String::new(), 0),
+            )
+            .await,
+            StatusCode::UNAUTHORIZED,
+        )
+        .await;
+        assert_eq!(
+            unauthorized["error"]["message"].as_str(),
+            Some("authentication failed")
+        );
+
+        let info = ok_json(
+            get_info(
+                State(app.clone()),
+                Path(space_id.to_string()),
+                accept_json(),
+                HeaderVals(read_token.clone(), 0),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(info["result"]["id"], space_id);
+
+        let status = ok_json(
+            get_formation_status(
+                State(app.clone()),
+                Path(space_id.to_string()),
+                accept_json(),
+                HeaderVals(read_token.clone(), 0),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status["result"]["id"], space_id);
+
+        let recall = ok_json(
+            post_recall(
+                State(app.clone()),
+                Path(space_id.to_string()),
+                accept_json(),
+                HeaderVals(read_token.clone(), 0),
+                json_bytes(&RecallInput {
+                    query: "Space token recall?".to_string(),
+                    context: None,
+                }),
+            )
+            .await,
+        )
+        .await;
+        assert!(recall["result"]["conversation"].is_number());
+
+        let kip = ok_json(
+            execute_kip_readonly(
+                State(app.clone()),
+                Path(space_id.to_string()),
+                accept_json(),
+                HeaderVals(read_token.clone(), 0),
+                Bytes::from_static(br#"{"command":"DESCRIBE PRIMER"}"#),
+            )
+            .await,
+        )
+        .await;
+        assert!(kip.as_object().is_some_and(|obj| !obj.is_empty()));
+
+        let user = ok_json(
+            get_or_init_user(
+                State(app.clone()),
+                Path(space_id.to_string()),
+                accept_json(),
+                HeaderVals(write_token.clone(), 0),
+                json_bytes(&GetOrInitUserInput {
+                    user: "space-token-user".to_string(),
+                    name: None,
+                }),
+            )
+            .await,
+        )
+        .await;
+        assert!(user["result"].to_string().contains("space-token-user"));
+
+        let formation = match post_formation(
+            State(app.clone()),
+            Path(space_id.to_string()),
+            accept_json(),
+            HeaderVals(write_token.clone(), 0),
+            json_bytes(&FormationInput {
+                messages: vec![Message {
+                    role: "user".to_string(),
+                    content: vec!["remember via space token".to_string().into()],
+                    ..Default::default()
+                }],
+                context: None,
+                timestamp: None,
+            }),
+        )
+        .await
+        {
+            Ok(value) => response_json(value.into_response()).await,
+            Err(err) => panic!("unexpected formation error: {}", err.message),
+        };
+        let formation_id = formation["result"]["conversation"].as_u64().unwrap();
+        for _ in 0..100 {
+            if !space.is_processing() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(!space.is_processing());
+
+        let conversation = ok_json(
+            get_conversation(
+                State(app.clone()),
+                Path((space_id.to_string(), formation_id.to_string())),
+                Query(ConversationDeltaQuery {
+                    messages_offset: None,
+                    artifacts_offset: None,
+                    collection: None,
+                }),
+                accept_json(),
+                HeaderVals(read_token.clone(), 0),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(conversation["result"]["_id"], formation_id);
+
+        let delta = ok_json(
+            get_conversation_delta(
+                State(app.clone()),
+                Path((space_id.to_string(), formation_id.to_string())),
+                Query(ConversationDeltaQuery {
+                    messages_offset: Some(0),
+                    artifacts_offset: Some(0),
+                    collection: None,
+                }),
+                accept_json(),
+                HeaderVals(read_token.clone(), 0),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(delta["result"]["_id"], formation_id);
+
+        let list = ok_json(
+            list_conversations(
+                State(app.clone()),
+                Path(space_id.to_string()),
+                Query(Pagination {
+                    cursor: None,
+                    limit: Some(5),
+                    collection: None,
+                }),
+                accept_json(),
+                HeaderVals(read_token, 0),
+            )
+            .await,
+        )
+        .await;
+        assert!(
+            list["result"]
+                .as_array()
+                .is_some_and(|items| !items.is_empty())
+        );
+
+        let maintenance = ok_json(
+            post_maintenance(
+                State(app),
+                Path(space_id.to_string()),
+                accept_json(),
+                HeaderVals(write_token, 0),
+                json_bytes(&MaintenanceInput {
+                    scope: MaintenanceScope::Quick,
+                    ..Default::default()
+                }),
+            )
+            .await,
+        )
+        .await;
+        assert!(maintenance["result"]["conversation"].is_number());
     }
 }

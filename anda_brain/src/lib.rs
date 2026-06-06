@@ -41,7 +41,13 @@ fn parse_ed25519_pubkey(input: &str) -> Option<VerifyingKey> {
 #[cfg(test)]
 mod tests {
     use super::parse_ed25519_pubkeys;
+    use coset::{
+        CoseKeyBuilder, Label,
+        cbor::value::Value,
+        iana::{self},
+    };
     use ic_auth_types::ByteBufB64;
+    use ic_cose_types::cose::CborSerializable;
 
     fn ed25519_basepoint_bytes() -> [u8; 32] {
         let mut bytes = [0x66; 32];
@@ -65,6 +71,22 @@ mod tests {
         assert_eq!(keys.len(), 2);
         assert_eq!(keys[0].to_bytes(), key_bytes);
         assert_eq!(keys[1].to_bytes(), key_bytes);
+    }
+
+    #[test]
+    fn parse_ed25519_pubkeys_accepts_cose_key_entries() {
+        let key_bytes = ed25519_basepoint_bytes();
+        let mut cose_key = CoseKeyBuilder::new_okp_key().build();
+        cose_key.params.push((
+            Label::Int(iana::OkpKeyParameter::X as i64),
+            Value::Bytes(key_bytes.to_vec()),
+        ));
+        let encoded = ByteBufB64(cose_key.to_vec().unwrap()).to_string();
+
+        let keys = parse_ed25519_pubkeys(&encoded).unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].to_bytes(), key_bytes);
     }
 
     #[test]

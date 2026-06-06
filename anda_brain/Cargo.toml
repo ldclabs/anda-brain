@@ -47,3 +47,5 @@ mimalloc = { workspace = true }
 markdown = { workspace = true }
 
 [dev-dependencies]
+coset = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
