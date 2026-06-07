@@ -2,6 +2,12 @@
 
 All notable changes to the Anda Brain project.
 
+## [0.6.10] — 2026-06-07
+
+### Changed
+- **CI now validates the workspace on Linux, Windows, and macOS.** The GitHub Actions test job now uses an OS matrix, installs `protoc` per runner, and runs clippy plus workspace tests on all three platforms.
+- **Dependencies updated for cross-platform runtime fixes.** `anda_core` 0.12.7 → 0.12.8 and `anda_engine` 0.12.30 → 0.12.32, picking up the latest platform-aware runtime support; transitive `bitflags` updated to 2.13.0.
+
 ## [0.6.9] — 2026-06-06
 
 ### Changed

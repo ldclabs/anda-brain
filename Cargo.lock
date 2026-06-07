@@ -85,7 +85,7 @@ checksum = "c880a97d28a3681c0267bd29cff89621202715b065127cd445fa0f0fe0aa2880"
 
 [[package]]
 name = "anda_brain"
-version = "0.6.9"
+version = "0.6.10"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",
@@ -158,9 +158,9 @@ dependencies = [
 
 [[package]]
 name = "anda_core"
-version = "0.12.7"
+version = "0.12.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d2c90576afccf16ad106d34f99640212aab44e08add4596aaf1b625c24b2a9b"
+checksum = "eb1b341096952999ce15c140cca5de9a9977e800ba68e899417bef30eda9fd8d"
 dependencies = [
  "anda_db_schema",
  "async-trait",
@@ -168,6 +168,7 @@ dependencies = [
  "candid",
  "chrono",
  "ciborium",
+ "encoding_rs",
  "futures",
  "http",
  "ic-oss-types",
@@ -182,6 +183,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tokio-util",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -312,9 +314,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.12.30"
+version = "0.12.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b861aa13ab82dd1d66b06ad702537b42db62a9cc55dc5c0e855021b5340d2c90"
+checksum = "a06a1beb90a6b911d9218d28039375456a417293a0041ffaa971258d673d29a5"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -357,6 +359,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "url",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -748,9 +751,9 @@ checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "bitflags"
-version = "2.12.1"
+version = "2.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "84d7ced0ae9557296835c32bf1b1e02b44c746701f898460fb000d7eaa84f00a"
+checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
 
 [[package]]
 name = "bitpacking"
@@ -4033,7 +4036,7 @@ version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
- "bitflags 2.12.1",
+ "bitflags 2.13.0",
 ]
 
 [[package]]
@@ -4383,7 +4386,7 @@ version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b7f4bc775c73d9a02cde8bf7b2ec4c9d12743edf609006c7facc23998404cd1d"
 dependencies = [
- "bitflags 2.12.1",
+ "bitflags 2.13.0",
  "core-foundation 0.10.1",
  "core-foundation-sys",
  "libc",
@@ -4985,7 +4988,7 @@ version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a13f3d0daba03132c0aa9767f98351b3488edc2c100cda2d2ec2b04f3d8d3c8b"
 dependencies = [
- "bitflags 2.12.1",
+ "bitflags 2.13.0",
  "core-foundation 0.9.4",
  "system-configuration-sys",
 ]
@@ -5330,7 +5333,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4cfcf7e2740e6fc6d4d688b4ef00650406bb94adf4731e43c096c3a19fe40840"
 dependencies = [
  "async-compression",
- "bitflags 2.12.1",
+ "bitflags 2.13.0",
  "bytes",
  "futures-core",
  "futures-util",
@@ -5714,7 +5717,7 @@ version = "0.244.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47b807c72e1bac69382b3a6fb3dbe8ea4c0ed87ff5629b8685ae6b9a611028fe"
 dependencies = [
- "bitflags 2.12.1",
+ "bitflags 2.13.0",
  "hashbrown 0.15.5",
  "indexmap",
  "semver",
@@ -6079,7 +6082,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9d66ea20e9553b30172b5e831994e35fbde2d165325bec84fc43dbf6f4eb9cb2"
 dependencies = [
  "anyhow",
- "bitflags 2.12.1",
+ "bitflags 2.13.0",
  "indexmap",
  "log",
  "serde",
