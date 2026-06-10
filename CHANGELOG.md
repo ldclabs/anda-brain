@@ -2,6 +2,14 @@
 
 All notable changes to the Anda Brain project.
 
+## [0.6.11] — 2026-06-10
+
+### Changed
+- **Dependencies updated for the latest engine runtime fixes.** `anda_engine` 0.12.32 → 0.12.35, bringing follow-up delivery, structured subagent arguments, and HTTP response decoding fixes into Brain.
+
+### Fixed
+- **Brain agents now read notes through the current engine note extension shape.** Formation, Maintenance, and Recall use `items` from the current notes payload while falling back to legacy notes storage when needed, preserving existing note context during the engine upgrade.
+
 ## [0.6.10] — 2026-06-07
 
 ### Changed

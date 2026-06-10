@@ -6,7 +6,7 @@ use anda_core::{
 };
 use anda_engine::{
     context::{AgentCtx, BaseCtx},
-    extension::note::{NoteTool, load_notes},
+    extension::note::{NoteTool, load_notes, load_notes_from_legacy},
     local_date_hour,
     memory::{
         Conversation, ConversationRef, ConversationStatus, Conversations, MemoryManagement,
@@ -340,7 +340,10 @@ impl Agent<AgentCtx> for RecallAgent {
             .add_conversation(ConversationRef::from(&conversation))
             .await?;
         conversation._id = id;
-        let notes = load_notes(&ctx).await.unwrap_or_default();
+        let notes = match load_notes(&ctx).await {
+            Some(n) => n,
+            None => load_notes_from_legacy(&ctx).await.unwrap_or_default(),
+        };
         match ctx
             .completion(
                 CompletionRequest {
@@ -348,7 +351,7 @@ impl Agent<AgentCtx> for RecallAgent {
                         "{}\n\n---\n\n# `DESCRIBE PRIMER` Result:\n{}\n\n---\n\n# Your Notes:\n{}\n\n# Counterparty profile:\n{}\n\n# Current Datetime: {}",
                         SELF_INSTRUCTIONS,
                         primer,
-                        serde_json::to_string(&notes.notes).unwrap_or_default(),
+                        serde_json::to_string(&notes.items).unwrap_or_default(),
                         serde_json::to_string(&counterparty_info).unwrap_or_default(),
                         local_date_hour(now_ms).unwrap_or_default()
                     ),

@@ -8,7 +8,7 @@ use anda_db::{
 };
 use anda_engine::{
     context::AgentCtx,
-    extension::note::{NoteTool, load_notes},
+    extension::note::{NoteTool, load_notes, load_notes_from_legacy},
     local_date_hour,
     memory::{Conversation, ConversationRef, ConversationStatus, MemoryManagement},
     unix_ms,
@@ -325,7 +325,10 @@ impl FormationAgent {
             }]
         };
         let primer = self.memory.describe_primer().await.unwrap_or_default();
-        let notes = load_notes(ctx).await.unwrap_or_default();
+        let notes = match load_notes(ctx).await {
+            Some(n) => n,
+            None => load_notes_from_legacy(ctx).await.unwrap_or_default(),
+        };
         let should_review = prompt.len() >= 10000;
         let mut runner = ctx.clone().completion_iter(
             CompletionRequest {
@@ -333,7 +336,7 @@ impl FormationAgent {
                     "{}\n\n---\n\n# `DESCRIBE PRIMER` Result:\n{}\n\n---\n\n# Your Notes:\n{}\n\n# Counterparty Profile:\n{}\n\n# Current Datetime: {}",
                     SELF_INSTRUCTIONS,
                     primer,
-                    serde_json::to_string(&notes.notes).unwrap_or_default(),
+                    serde_json::to_string(&notes.items).unwrap_or_default(),
                     serde_json::to_string(&counterparty_info).unwrap_or_default(),
                     local_date_hour(now_ms).unwrap_or_default()
                 ),
