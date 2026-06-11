@@ -104,3 +104,41 @@ func TestMessageContentTextAndFirstText(t *testing.T) {
 		t.Fatalf("unexpected first text: ok=%v first=%q", ok, first)
 	}
 }
+
+func TestKipCommandItemObjectWithoutParameters(t *testing.T) {
+	var item KipCommandItem
+	if err := json.Unmarshal([]byte(`{"command":"DESCRIBE PRIMER"}`), &item); err != nil {
+		t.Fatalf("unmarshal command object without parameters: %v", err)
+	}
+	if item.Object == nil || item.Object.Command != "DESCRIBE PRIMER" {
+		t.Fatalf("unexpected item: %+v", item)
+	}
+
+	// nil parameters must be omitted on the wire: the server rejects
+	// an explicit "parameters": null.
+	encoded, err := json.Marshal(item)
+	if err != nil {
+		t.Fatalf("marshal command item: %v", err)
+	}
+	if string(encoded) != `{"command":"DESCRIBE PRIMER"}` {
+		t.Fatalf("unexpected encoding: %s", encoded)
+	}
+}
+
+func TestKipRequestSingleCommand(t *testing.T) {
+	var req KipRequest
+	if err := json.Unmarshal([]byte(`{"command":"DESCRIBE PRIMER"}`), &req); err != nil {
+		t.Fatalf("unmarshal single-command request: %v", err)
+	}
+	if req.Command != "DESCRIBE PRIMER" || len(req.Commands) != 0 {
+		t.Fatalf("unexpected request: %+v", req)
+	}
+
+	encoded, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	if string(encoded) != `{"command":"DESCRIBE PRIMER"}` {
+		t.Fatalf("unexpected encoding: %s", encoded)
+	}
+}

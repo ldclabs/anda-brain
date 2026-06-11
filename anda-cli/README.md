@@ -19,11 +19,13 @@ go build -o anda-cli .
 
 Configuration can be provided via flags or environment variables:
 
-| Flag         | Env Variable    | Description  | Default                 |
-| ------------ | --------------- | ------------ | ----------------------- |
-| `--base-url` | `ANDA_BASE_URL` | API base URL | `https://brain.anda.ai` |
-| `--space-id` | `ANDA_SPACE_ID` | Space ID     |                         |
-| `--token`    | `ANDA_TOKEN`    | Auth token   |                         |
+| Flag         | Env Variable    | Description                                       | Default                 |
+| ------------ | --------------- | ------------------------------------------------- | ----------------------- |
+| `--base-url` | `ANDA_BASE_URL` | API base URL                                      | `http://127.0.0.1:8042` |
+| `--space-id` | `ANDA_SPACE_ID` | Space ID                                          |                         |
+| `--token`    | `ANDA_TOKEN`    | Auth token                                        |                         |
+| `--shard`    | `ANDA_SHARD`    | Shard index (`Shard-Id` header) for sharded setup | `0`                     |
+| `--timeout`  | `ANDA_TIMEOUT`  | HTTP request timeout in seconds                   | `120`                   |
 
 **CWT command flags:**
 
@@ -58,8 +60,8 @@ anda-cli cwt --key <base64url_private_key> --subject <user_id> --audience "*" --
 ### Service
 
 ```bash
-# Get service information
-anda-cli info
+# Get service information (name, version, sharding)
+anda-cli status
 ```
 
 ### Memory Operations
@@ -85,7 +87,8 @@ echo '[{"role":"user","content":"Hello"}]' | \
 echo 'Hello from stdin plain text' | \
   anda-cli --space-id my_space --token $TOKEN formation
 
-# Batch submit files by exact filename (recursive)
+# Batch submit files by exact filename (recursive).
+# Hidden entries (dot-prefixed, e.g. .git) and the checklist file are skipped.
 anda-cli --space-id my_space --token $TOKEN formation \
   --batch-dir ./docs \
   --batch-file-name Skill.md
@@ -124,7 +127,11 @@ anda-cli --space-id my_space --token $TOKEN recall \
 anda-cli --space-id my_space --token $TOKEN maintenance
 anda-cli --space-id my_space --token $TOKEN maintenance --trigger on_demand --scope full
 
-# Execute read-only KIP request from inline JSON
+# Execute a single read-only KIP command
+anda-cli --space-id my_space --token $TOKEN execute-kip-readonly \
+  --request '{"command":"DESCRIBE PRIMER"}'
+
+# Execute read-only KIP request from inline JSON (batch commands)
 anda-cli --space-id my_space --token $TOKEN execute-kip-readonly \
   --request '{"commands":[{"command":"query_domain","parameters":{"query":"user preferences"}}]}'
 
@@ -135,11 +142,17 @@ anda-cli --space-id my_space --token $TOKEN execute-kip-readonly --file ./kip_re
 cat ./kip_request.json | anda-cli --space-id my_space --token $TOKEN execute-kip-readonly
 ```
 
-### Space Status & Conversations
+### Space Info & Conversations
 
 ```bash
-# Get space status
-anda-cli --space-id my_space --token $TOKEN status
+# Get space information and statistics
+anda-cli --space-id my_space --token $TOKEN info
+
+# Get formation processing status
+anda-cli --space-id my_space --token $TOKEN formation-status
+
+# Get or initialize a user concept
+anda-cli --space-id my_space --token $TOKEN get-or-init-user principal_123 --name Alice
 
 # List conversations
 anda-cli --space-id my_space --token $TOKEN conversations list --limit 10
@@ -170,6 +183,9 @@ anda-cli --space-id my_space --token $CWT_TOKEN management update-space --name "
 
 # Restart formation for a conversation
 anda-cli --space-id my_space --token $CWT_TOKEN management restart-formation --conversation 42
+
+# Get BYOK configuration
+anda-cli --space-id my_space --token $CWT_TOKEN management get-byok
 
 # Update BYOK configuration
 anda-cli --space-id my_space --token $CWT_TOKEN management update-byok \

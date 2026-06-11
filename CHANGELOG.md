@@ -7,6 +7,8 @@ All notable changes to the Anda Brain project.
 ### Changed
 - **Brain service lifecycle handling is more robust.** Shutdown now closes loaded spaces concurrently, idle eviction closes databases before removing entries, and scheduled maintenance trigger construction is simplified while preserving the existing cadence.
 - **Shared request handling has been consolidated.** API handlers now use a common sharding validator, and the Chinese website response is pre-rendered with the correct `zh-CN` document language.
+- **`anda-cli` now targets the local Brain service by default and exposes deployment controls.** The CLI default base URL is `http://127.0.0.1:8042`, the reported CLI version is aligned to `0.6.12`, and new `--shard`/`ANDA_SHARD` plus `--timeout`/`ANDA_TIMEOUT` options send `Shard-Id` headers and tune HTTP request timeouts.
+- **`anda-cli` documentation now reflects the current command surface.** The README documents `status` for service metadata, `info` for space details, `formation-status`, `get-or-init-user`, BYOK retrieval, `daydream` maintenance scope, batch formation exclusions, and single-command KIP readonly requests.
 
 ### Fixed
 - **Formation resumes correctly from an empty processed marker.** Spaces now restart formation from the beginning when no processed marker exists, so conversations queued before the first successful formation pass are not left stuck.
@@ -14,6 +16,10 @@ All notable changes to the Anda Brain project.
 - **Agent context history now keeps completed conversations only.** Maintenance and Recall initialization filter out in-progress conversations, and Recall uses the shared completed-history helper when appending successful runs.
 - **Idle probes for unknown spaces no longer grow the space map indefinitely.** Uninitialized placeholder entries are evicted once idle, while initialized spaces are still protected against concurrent users and processing work.
 - **Space token lookup is restricted to token-prefixed credentials.** Token verification now rejects non-`ST` keys before credential lookup, keeping other extensions out of the token path.
+- **`anda-cli formation` now rejects malformed JSON message payloads instead of storing them as plain text.** Valid JSON arrays and objects must decode to messages with role and content, while non-JSON log-like text still submits as a user message.
+- **`anda-cli formation` batch mode avoids submitting bookkeeping and hidden files.** Recursive batch scans skip dot-prefixed entries, the checklist file, and temporary report files while preserving user/agent/topic context and only filling per-file `source` when it was not already provided.
+- **`anda-cli execute-kip-readonly` accepts single-command requests cleanly.** Requests may now use either `command` or `commands`, object command `parameters` are optional and omitted when empty, and the two forms are validated as mutually exclusive.
+- **`anda-cli conversations` supports 64-bit conversation IDs.** Conversation detail and delta commands parse IDs as unsigned 64-bit values to match server-side identifiers.
 
 ## [0.6.11] — 2026-06-10
 

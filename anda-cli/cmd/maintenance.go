@@ -44,7 +44,7 @@ Example:
 }
 
 func init() {
-	maintenanceCmd.Flags().String("trigger", "", "Trigger type: scheduled, threshold, on_demand")
-	maintenanceCmd.Flags().String("scope", "", "Scope: full, quick")
+	maintenanceCmd.Flags().String("trigger", "", "Trigger type: scheduled, threshold, on_demand (default: on_demand)")
+	maintenanceCmd.Flags().String("scope", "", "Scope: full, quick, daydream (default: daydream)")
 	rootCmd.AddCommand(maintenanceCmd)
 }

@@ -40,7 +40,7 @@ var getConversationCmd = &cobra.Command{
 	Short: "Get a single conversation detail",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		id, err := strconv.Atoi(args[0])
+		id, err := strconv.ParseUint(args[0], 10, 64)
 		if err != nil {
 			exitError(fmt.Errorf("invalid conversation ID: %w", err))
 		}
@@ -64,7 +64,7 @@ var getConversationDeltaCmd = &cobra.Command{
 	Short: "Get incremental conversation updates",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		id, err := strconv.Atoi(args[0])
+		id, err := strconv.ParseUint(args[0], 10, 64)
 		if err != nil {
 			exitError(fmt.Errorf("invalid conversation ID: %w", err))
 		}

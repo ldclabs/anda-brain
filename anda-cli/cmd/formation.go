@@ -86,7 +86,9 @@ Example:
 				exitError(fmt.Errorf("parse file input: %w", err))
 			}
 
-			if ctx.Source == "" {
+			if ctx == nil {
+				ctx = &api.InputContext{Source: messagesFile}
+			} else if ctx.Source == "" {
 				ctx.Source = messagesFile
 			}
 		} else {
@@ -134,27 +136,55 @@ Example:
 
 func parseMessagesInput(raw string) ([]api.Message, error) {
 	raw = strings.TrimSpace(raw)
-	if raw == "" {
+	if raw == "" || raw == "null" {
 		return nil, fmt.Errorf("empty input")
 	}
 
-	var messages []api.Message
-	if err := json.Unmarshal([]byte(raw), &messages); err == nil {
-		if len(messages) == 0 {
-			return nil, fmt.Errorf("messages cannot be empty")
+	// A valid JSON array/object must be a valid message payload: falling back to
+	// plain text would silently submit malformed structures as memory content.
+	if json.Valid([]byte(raw)) {
+		switch raw[0] {
+		case '[':
+			var messages []api.Message
+			if err := json.Unmarshal([]byte(raw), &messages); err != nil {
+				return nil, fmt.Errorf("invalid message array: %w", err)
+			}
+			if len(messages) == 0 {
+				return nil, fmt.Errorf("messages cannot be empty")
+			}
+			if err := validateMessages(messages); err != nil {
+				return nil, err
+			}
+			return messages, nil
+		case '{':
+			var single api.Message
+			if err := json.Unmarshal([]byte(raw), &single); err != nil {
+				return nil, fmt.Errorf("invalid message object: %w", err)
+			}
+			messages := []api.Message{single}
+			if err := validateMessages(messages); err != nil {
+				return nil, err
+			}
+			return messages, nil
 		}
-		return messages, nil
-	}
-
-	var single api.Message
-	if err := json.Unmarshal([]byte(raw), &single); err == nil {
-		return []api.Message{single}, nil
 	}
 
 	return []api.Message{{
 		Role:    "user",
 		Content: api.MessageContentFromText(raw),
 	}}, nil
+}
+
+func validateMessages(messages []api.Message) error {
+	for idx, message := range messages {
+		if strings.TrimSpace(string(message.Role)) == "" {
+			return fmt.Errorf("message[%d] is not a valid message: missing role", idx)
+		}
+		if len(message.Content) == 0 {
+			return fmt.Errorf("message[%d] is not a valid message: missing content", idx)
+		}
+	}
+	return nil
 }
 
 func validateMessageContentLength(messages []api.Message) error {
@@ -167,7 +197,12 @@ func validateMessageContentLength(messages []api.Message) error {
 	return nil
 }
 
+// buildInputContext returns nil when every field is empty so the request
+// omits the context instead of sending an empty object.
 func buildInputContext(user, agent, source, topic string) *api.InputContext {
+	if user == "" && agent == "" && source == "" && topic == "" {
+		return nil
+	}
 	return &api.InputContext{
 		Counterparty: user,
 		Agent:        agent,

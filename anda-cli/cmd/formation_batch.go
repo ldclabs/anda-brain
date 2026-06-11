@@ -70,7 +70,11 @@ func runFileFormationBatch(ctx context.Context, client *api.Client, opts fileFor
 		return err
 	}
 
-	targetFiles, err := findBatchFiles(absRootDir, selector)
+	excludePaths := map[string]bool{
+		reportPath:          true,
+		reportPath + ".tmp": true,
+	}
+	targetFiles, err := findBatchFiles(absRootDir, selector, excludePaths)
 	if err != nil {
 		return err
 	}
@@ -93,7 +97,7 @@ func runFileFormationBatch(ctx context.Context, client *api.Client, opts fileFor
 	wouldProcess := 0
 	succeeded := 0
 	failed := 0
-	if opts.InputContext != nil {
+	if opts.InputContext == nil {
 		opts.InputContext = &api.InputContext{}
 	}
 
@@ -161,7 +165,9 @@ func runFileFormationBatch(ctx context.Context, client *api.Client, opts fileFor
 		}
 
 		inputContext := *opts.InputContext
-		inputContext.Source = targetFile
+		if inputContext.Source == "" {
+			inputContext.Source = targetFile
+		}
 		input := &api.FormationInput{
 			Messages:  messages,
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -254,13 +260,26 @@ func resolveBatchReportPath(rootDir, reportPath string) (string, error) {
 	return absReportPath, nil
 }
 
-func findBatchFiles(rootDir, selector string) ([]string, error) {
+// findBatchFiles walks rootDir collecting files that match the selector.
+// Hidden entries (dot-prefixed, e.g. .git, .DS_Store) and excludePaths
+// (the batch checklist and its temp file) are skipped so bookkeeping and
+// VCS internals are never submitted as memory content.
+func findBatchFiles(rootDir, selector string, excludePaths map[string]bool) ([]string, error) {
 	files := make([]string, 0)
 	err := filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
+		if path != rootDir && strings.HasPrefix(d.Name(), ".") {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		if d.IsDir() {
+			return nil
+		}
+		if excludePaths[path] {
 			return nil
 		}
 		if matchesBatchSelector(d.Name(), selector) {

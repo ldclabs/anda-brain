@@ -2,9 +2,14 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ldclabs/anda-brain/anda-cli/api"
 )
 
 func TestParseMessagesInput_JSONArray(t *testing.T) {
@@ -53,6 +58,32 @@ func TestParseMessagesInput_EmptyInput(t *testing.T) {
 	_, err := parseMessagesInput("   \n\t  ")
 	if err == nil {
 		t.Fatalf("expected error for empty input")
+	}
+}
+
+func TestParseMessagesInput_RejectsNonMessageJSON(t *testing.T) {
+	// Valid JSON object that is not a message must not be silently
+	// converted into an empty message or plain text.
+	if _, err := parseMessagesInput(`{"foo":1}`); err == nil {
+		t.Fatalf("expected error for JSON object without role/content")
+	}
+	if _, err := parseMessagesInput(`[{"role":"user"}]`); err == nil {
+		t.Fatalf("expected error for message missing content")
+	}
+	if _, err := parseMessagesInput(`["just a string"]`); err == nil {
+		t.Fatalf("expected error for JSON array of strings")
+	}
+}
+
+func TestParseMessagesInput_PlainTextLooksLikeJSON(t *testing.T) {
+	// Non-valid-JSON input starting with '[' (e.g. log lines) stays plain text.
+	messages, err := parseMessagesInput("[2026-06-11] meeting notes")
+	if err != nil {
+		t.Fatalf("parseMessagesInput returned error: %v", err)
+	}
+	text, ok := messages[0].Content.FirstText()
+	if messages[0].Role != "user" || !ok || text != "[2026-06-11] meeting notes" {
+		t.Fatalf("unexpected message: %+v", messages[0])
 	}
 }
 
@@ -115,7 +146,7 @@ func TestFindBatchFilesRecursiveByName(t *testing.T) {
 	mustWriteFile(t, filepath.Join(root, "a", "b", "skill.md"), "deep")
 	mustWriteFile(t, filepath.Join(root, "x", "README.md"), "ignore")
 
-	files, err := findBatchFiles(root, "name:skill.md")
+	files, err := findBatchFiles(root, "name:skill.md", nil)
 	if err != nil {
 		t.Fatalf("findBatchFiles returned error: %v", err)
 	}
@@ -134,12 +165,55 @@ func TestFindBatchFilesRecursiveByExtension(t *testing.T) {
 	mustWriteFile(t, filepath.Join(root, "a", "b", "note.md"), "deep")
 	mustWriteFile(t, filepath.Join(root, "x", "README.txt"), "ignore")
 
-	files, err := findBatchFiles(root, "ext:.md")
+	files, err := findBatchFiles(root, "ext:.md", nil)
 	if err != nil {
 		t.Fatalf("findBatchFiles returned error: %v", err)
 	}
 	if len(files) != 3 {
 		t.Fatalf("expected 3 markdown files, got %d: %v", len(files), files)
+	}
+}
+
+func TestFindBatchFilesSkipsHiddenAndExcluded(t *testing.T) {
+	root := t.TempDir()
+	mustMkdirAll(t, filepath.Join(root, ".git"))
+	mustMkdirAll(t, filepath.Join(root, "docs"))
+
+	mustWriteFile(t, filepath.Join(root, "keep.json"), "{}")
+	mustWriteFile(t, filepath.Join(root, "docs", "data.json"), "{}")
+	mustWriteFile(t, filepath.Join(root, ".hidden.json"), "{}")
+	mustWriteFile(t, filepath.Join(root, ".git", "config.json"), "{}")
+	mustWriteFile(t, filepath.Join(root, defaultBatchReportFileName), "{}")
+	excluded := filepath.Join(root, "report.json")
+	mustWriteFile(t, excluded, "{}")
+
+	files, err := findBatchFiles(root, "ext:.json", map[string]bool{excluded: true, excluded + ".tmp": true})
+	if err != nil {
+		t.Fatalf("findBatchFiles returned error: %v", err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("expected 2 files, got %d: %v", len(files), files)
+	}
+	for _, f := range files {
+		name := filepath.Base(f)
+		if name != "keep.json" && name != "data.json" {
+			t.Fatalf("unexpected file matched: %s", f)
+		}
+	}
+}
+
+func TestFindBatchFilesHiddenRootDirIsWalked(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, ".claude")
+	mustMkdirAll(t, root)
+	mustWriteFile(t, filepath.Join(root, "Skill.md"), "content")
+
+	files, err := findBatchFiles(root, "name:skill.md", nil)
+	if err != nil {
+		t.Fatalf("findBatchFiles returned error: %v", err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("expected 1 file under hidden root, got %d: %v", len(files), files)
 	}
 }
 
@@ -234,6 +308,73 @@ func TestRunFileFormationBatchDryRun(t *testing.T) {
 	}
 	if entry.Status != batchStatusPending {
 		t.Fatalf("dry-run should keep pending status, got %q", entry.Status)
+	}
+}
+
+func TestRunFileFormationBatchPreservesInputContext(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "Skill.md"), "plain text memory")
+
+	var received []api.FormationInput
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var input api.FormationInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Errorf("decode formation input: %v", err)
+		}
+		received = append(received, input)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"result":{"content":"ok","conversation":7}}`))
+	}))
+	defer server.Close()
+
+	client := api.NewClient(server.URL, "test_space", "token")
+	err := runFileFormationBatch(context.Background(), client, fileFormationBatchOptions{
+		RootDir:    root,
+		FileName:   "Skill.md",
+		ReportPath: filepath.Join(root, "report.json"),
+		InputContext: &api.InputContext{
+			Counterparty: "u1",
+			Agent:        "agent1",
+			Topic:        "topic1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("runFileFormationBatch returned error: %v", err)
+	}
+
+	if len(received) != 1 {
+		t.Fatalf("expected 1 formation request, got %d", len(received))
+	}
+	got := received[0].Context
+	if got == nil {
+		t.Fatalf("expected context to be sent")
+	}
+	if got.Counterparty != "u1" || got.Agent != "agent1" || got.Topic != "topic1" {
+		t.Fatalf("input context not preserved: %+v", got)
+	}
+	if got.Source == "" {
+		t.Fatalf("expected per-file source to be set")
+	}
+}
+
+func TestRunFileFormationBatchNilContext(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "Skill.md"), "plain text memory")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"result":{"content":"ok","conversation":8}}`))
+	}))
+	defer server.Close()
+
+	client := api.NewClient(server.URL, "test_space", "token")
+	err := runFileFormationBatch(context.Background(), client, fileFormationBatchOptions{
+		RootDir:    root,
+		FileName:   "Skill.md",
+		ReportPath: filepath.Join(root, "report.json"),
+	})
+	if err != nil {
+		t.Fatalf("runFileFormationBatch with nil context returned error: %v", err)
 	}
 }
 

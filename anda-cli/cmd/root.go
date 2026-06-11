@@ -4,21 +4,30 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
+	"time"
 
 	"github.com/ldclabs/anda-brain/anda-cli/api"
 	"github.com/spf13/cobra"
 )
 
 var (
-	baseURL string
-	spaceID string
-	token   string
+	baseURL    string
+	spaceID    string
+	token      string
+	shard      int
+	timeoutSec int
 )
 
-const Version = "0.6.0"
+const Version = "0.6.12"
 
 func newClient() *api.Client {
-	return api.NewClient(baseURL, spaceID, token)
+	client := api.NewClient(baseURL, spaceID, token)
+	client.Shard = shard
+	if timeoutSec > 0 {
+		client.HTTPClient.Timeout = time.Duration(timeoutSec) * time.Second
+	}
+	return client
 }
 
 func printJSON(v any) {
@@ -52,11 +61,23 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&baseURL, "base-url", envOrDefault("ANDA_BASE_URL", api.DefaultBaseURL), "API base URL (env: ANDA_BASE_URL)")
 	rootCmd.PersistentFlags().StringVar(&spaceID, "space-id", os.Getenv("ANDA_SPACE_ID"), "Space ID (env: ANDA_SPACE_ID)")
 	rootCmd.PersistentFlags().StringVar(&token, "token", os.Getenv("ANDA_TOKEN"), "Auth token (env: ANDA_TOKEN)")
+	rootCmd.PersistentFlags().IntVar(&shard, "shard", envOrDefaultInt("ANDA_SHARD", 0), "Shard index sent as Shard-Id header for sharded deployments (env: ANDA_SHARD)")
+	rootCmd.PersistentFlags().IntVar(&timeoutSec, "timeout", envOrDefaultInt("ANDA_TIMEOUT", 120), "HTTP request timeout in seconds (env: ANDA_TIMEOUT)")
 }
 
 func envOrDefault(key, defaultVal string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return defaultVal
+}
+
+func envOrDefaultInt(key string, defaultVal int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+		fmt.Fprintf(os.Stderr, "Warning: invalid %s=%q, using default %d\n", key, v, defaultVal)
 	}
 	return defaultVal
 }

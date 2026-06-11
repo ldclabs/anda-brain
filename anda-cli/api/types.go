@@ -439,19 +439,19 @@ func (c MessageContent) SizeBytes() int {
 	for _, part := range c {
 		switch p := part.(type) {
 		case TextPart:
-			total += len([]byte(p.Text))
+			total += len(p.Text)
 			continue
 		case *TextPart:
 			if p != nil {
-				total += len([]byte(p.Text))
+				total += len(p.Text)
 				continue
 			}
 		case ReasoningPart:
-			total += len([]byte(p.Text))
+			total += len(p.Text)
 			continue
 		case *ReasoningPart:
 			if p != nil {
-				total += len([]byte(p.Text))
+				total += len(p.Text)
 				continue
 			}
 		}
@@ -693,7 +693,7 @@ type ServiceInfo struct {
 
 type KipCommandObject struct {
 	Command    string         `json:"command"`
-	Parameters map[string]any `json:"parameters"`
+	Parameters map[string]any `json:"parameters,omitempty"`
 }
 
 type KipCommandItem struct {
@@ -730,9 +730,6 @@ func (item *KipCommandItem) UnmarshalJSON(data []byte) error {
 		if commandObject.Command == "" {
 			return fmt.Errorf("kip command object requires non-empty command")
 		}
-		if commandObject.Parameters == nil {
-			return fmt.Errorf("kip command object requires parameters")
-		}
 		item.Object = &commandObject
 		item.String = nil
 		return nil
@@ -752,7 +749,9 @@ func (item KipCommandItem) MarshalJSON() ([]byte, error) {
 }
 
 type KipRequest struct {
-	Commands   []KipCommandItem `json:"commands"`
+	// Command is a single KIP command string. Mutually exclusive with Commands.
+	Command    string           `json:"command,omitempty"`
+	Commands   []KipCommandItem `json:"commands,omitempty"`
 	Parameters map[string]any   `json:"parameters,omitempty"`
 	DryRun     bool             `json:"dry_run,omitempty"`
 }

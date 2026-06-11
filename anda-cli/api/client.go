@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -19,9 +20,11 @@ const (
 
 // Client is the HTTP client for the Anda Brain API.
 type Client struct {
-	BaseURL    string
-	SpaceID    string
-	Token      string
+	BaseURL string
+	SpaceID string
+	Token   string
+	// Shard is sent as the "Shard-Id" header when > 0, for sharded deployments.
+	Shard      int
 	HTTPClient *http.Client
 }
 
@@ -64,6 +67,9 @@ func (c *Client) doJSON(ctx context.Context, method, path string, body any) ([]b
 	req.Header.Set("Accept", "application/json")
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	if c.Shard > 0 {
+		req.Header.Set("Shard-Id", strconv.Itoa(c.Shard))
 	}
 
 	resp, err := c.HTTPClient.Do(req)
@@ -196,7 +202,7 @@ func (c *Client) GetFormationStatus(ctx context.Context) (*RpcResponse[Formation
 }
 
 // GetConversation returns a single conversation.
-func (c *Client) GetConversation(ctx context.Context, conversationID int, collection string) (*RpcResponse[Conversation], error) {
+func (c *Client) GetConversation(ctx context.Context, conversationID uint64, collection string) (*RpcResponse[Conversation], error) {
 	path := fmt.Sprintf("%s/conversations/%d", c.spacePath(""), conversationID)
 	params := url.Values{}
 	if collection != "" {
@@ -217,7 +223,7 @@ func (c *Client) GetConversation(ctx context.Context, conversationID int, collec
 }
 
 // GetConversationDelta returns incremental conversation updates since the given offsets.
-func (c *Client) GetConversationDelta(ctx context.Context, conversationID int, messagesOffset, artifactsOffset int, collection string) (*RpcResponse[ConversationDelta], error) {
+func (c *Client) GetConversationDelta(ctx context.Context, conversationID uint64, messagesOffset, artifactsOffset int, collection string) (*RpcResponse[ConversationDelta], error) {
 	path := fmt.Sprintf("%s/conversations/%d/delta", c.spacePath(""), conversationID)
 	params := url.Values{}
 	if messagesOffset > 0 {

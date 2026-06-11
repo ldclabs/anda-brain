@@ -17,8 +17,12 @@ var executeKIPReadonlyCmd = &cobra.Command{
 	Long: `Execute a KIP request in read-only mode.
 
 Input JSON can be provided via --request, --file, or stdin.
+The request accepts either a single "command" string or a "commands" array.
 
 Example:
+  anda-cli --space-id my_space --token $TOKEN execute-kip-readonly \
+		--request '{"command":"DESCRIBE PRIMER"}'
+
   anda-cli --space-id my_space --token $TOKEN execute-kip-readonly \
 		--request '{"commands":["DESCRIBE PRIMER"]}'
 
@@ -43,8 +47,12 @@ Example:
 		if err := json.Unmarshal(raw, &input); err != nil {
 			exitError(fmt.Errorf("invalid request JSON: %w", err))
 		}
-		if len(input.Commands) == 0 {
-			exitError(fmt.Errorf("invalid request JSON: commands cannot be empty"))
+		input.Command = strings.TrimSpace(input.Command)
+		if input.Command == "" && len(input.Commands) == 0 {
+			exitError(fmt.Errorf("invalid request JSON: either command or commands is required"))
+		}
+		if input.Command != "" && len(input.Commands) > 0 {
+			exitError(fmt.Errorf("invalid request JSON: command and commands are mutually exclusive"))
 		}
 
 		client := newClient()

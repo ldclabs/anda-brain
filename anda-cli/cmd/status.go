@@ -6,7 +6,7 @@ import (
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Get service status and statistics",
+	Short: "Get service information (name, version, sharding)",
 	Run: func(cmd *cobra.Command, args []string) {
 		client := newClient()
 		info, err := client.GetInfo(cmd.Context())
