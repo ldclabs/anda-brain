@@ -63,7 +63,13 @@ impl MaintenanceAgent {
             .conversations
             .list_conversations_by_user(&SELF_USER_ID, None, Some(2))
             .await?;
-        *self.history.write() = conversations.into_iter().map(Document::from).collect();
+        // Only completed conversations belong in the model context, matching
+        // the runtime push_completed_history behavior.
+        *self.history.write() = conversations
+            .into_iter()
+            .filter(|c| c.status == ConversationStatus::Completed)
+            .map(Document::from)
+            .collect();
         Ok(())
     }
 
@@ -291,7 +297,10 @@ impl MaintenanceAgent {
                     let now_ms = unix_ms();
                     let is_done = runner.is_done();
 
-                    if first_round {
+                    if res.chat_history.is_empty() {
+                        // An anomalous round (e.g. cancelled before any output)
+                        // must not erase the original input from the record.
+                    } else if first_round {
                         first_round = false;
                         conversation.messages.clear();
                         conversation.append_messages(res.chat_history);

@@ -2,6 +2,19 @@
 
 All notable changes to the Anda Brain project.
 
+## [0.6.12] — 2026-06-11
+
+### Changed
+- **Brain service lifecycle handling is more robust.** Shutdown now closes loaded spaces concurrently, idle eviction closes databases before removing entries, and scheduled maintenance trigger construction is simplified while preserving the existing cadence.
+- **Shared request handling has been consolidated.** API handlers now use a common sharding validator, and the Chinese website response is pre-rendered with the correct `zh-CN` document language.
+
+### Fixed
+- **Formation resumes correctly from an empty processed marker.** Spaces now restart formation from the beginning when no processed marker exists, so conversations queued before the first successful formation pass are not left stuck.
+- **Agent records preserve original input on anomalous empty rounds.** Formation and Maintenance no longer clear a conversation's original messages when a cancelled or empty round returns no chat history.
+- **Agent context history now keeps completed conversations only.** Maintenance and Recall initialization filter out in-progress conversations, and Recall uses the shared completed-history helper when appending successful runs.
+- **Idle probes for unknown spaces no longer grow the space map indefinitely.** Uninitialized placeholder entries are evicted once idle, while initialized spaces are still protected against concurrent users and processing work.
+- **Space token lookup is restricted to token-prefixed credentials.** Token verification now rejects non-`ST` keys before credential lookup, keeping other extensions out of the token path.
+
 ## [0.6.11] — 2026-06-10
 
 ### Changed

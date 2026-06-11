@@ -362,7 +362,10 @@ impl FormationAgent {
                     let now_ms = unix_ms();
                     let is_done = runner.is_done();
 
-                    if first_round {
+                    if res.chat_history.is_empty() {
+                        // An anomalous round (e.g. cancelled before any output)
+                        // must not erase the original input from the record.
+                    } else if first_round {
                         first_round = false;
                         conversation.messages.clear();
                         conversation.append_messages(res.chat_history);
@@ -498,9 +501,10 @@ impl Agent<AgentCtx> for FormationAgent {
                     "Formation queued while maintenance is processing"
                 );
             } else {
-                if let Some(prev_id) = self.get_processed()
-                    && prev_id + 1 < id
-                {
+                // A missing marker means nothing was processed yet; resume from
+                // the beginning to catch conversations queued before this one.
+                let prev_id = self.get_processed().unwrap_or_default();
+                if prev_id + 1 < id {
                     // Resume from the last processed conversation to catch any missed ones
                     if let Some(conv) = self.find_next_submitted(prev_id).await {
                         self.try_process(ctx, conv);

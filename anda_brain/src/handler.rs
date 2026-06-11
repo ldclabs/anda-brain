@@ -28,8 +28,21 @@ const APPLE_TOUCH_ICON: &[u8] = include_bytes!("../apple-touch-icon.webp");
 pub static WEBSITE: LazyLock<String> =
     LazyLock::new(|| APP_HTML.replace("%sveltekit.body%", &markdown_to_html(WEBSITE_MARKDOWN)));
 
-pub static WEBSITE_CN: LazyLock<String> =
-    LazyLock::new(|| APP_HTML.replace("%sveltekit.body%", &markdown_to_html(WEBSITE_CN_MARKDOWN)));
+pub static WEBSITE_CN: LazyLock<String> = LazyLock::new(|| {
+    APP_HTML
+        .replacen("<html lang=\"en\"", "<html lang=\"zh-CN\"", 1)
+        .replace("%sveltekit.body%", &markdown_to_html(WEBSITE_CN_MARKDOWN))
+});
+
+fn ensure_sharding(app: &AppState, sharding: u32) -> Result<(), AppError> {
+    if sharding != app.sharding {
+        return Err(AppError::bad_request(format!(
+            "space_id sharding {} does not match server sharding {}",
+            sharding, app.sharding
+        )));
+    }
+    Ok(())
+}
 
 pub async fn favicon() -> Response {
     Response::builder()
@@ -67,10 +80,9 @@ pub async fn get_website(Accept(ct, is_cn): Accept) -> Response {
         }
         _ => {
             if is_cn {
-                Html(WEBSITE_CN.replacen("<html lang=\"en\"", "<html lang=\"zh-CN\"", 1))
-                    .into_response()
+                Html(WEBSITE_CN.as_str()).into_response()
             } else {
-                Html(WEBSITE.clone()).into_response()
+                Html(WEBSITE.as_str()).into_response()
             }
         }
     }
@@ -87,12 +99,7 @@ pub async fn get_info(
     Accept(ct, _): Accept,
     HeaderVals(token, sharding): HeaderVals,
 ) -> Result<impl IntoResponse, AppError> {
-    if sharding != app.sharding {
-        return Err(AppError::bad_request(format!(
-            "space_id sharding {} does not match server sharding {}",
-            sharding, app.sharding
-        )));
-    }
+    ensure_sharding(&app, sharding)?;
 
     let now_ms = unix_ms();
     let t = app
@@ -122,12 +129,7 @@ pub async fn get_formation_status(
     Accept(ct, _): Accept,
     HeaderVals(token, sharding): HeaderVals,
 ) -> Result<impl IntoResponse, AppError> {
-    if sharding != app.sharding {
-        return Err(AppError::bad_request(format!(
-            "space_id sharding {} does not match server sharding {}",
-            sharding, app.sharding
-        )));
-    }
+    ensure_sharding(&app, sharding)?;
 
     let now_ms = unix_ms();
     let t = app
@@ -158,12 +160,7 @@ pub async fn post_formation(
     HeaderVals(token, sharding): HeaderVals,
     body: Bytes,
 ) -> Result<Response, AppError> {
-    if sharding != app.sharding {
-        return Err(AppError::bad_request(format!(
-            "space_id sharding {} does not match server sharding {}",
-            sharding, app.sharding
-        )));
-    }
+    ensure_sharding(&app, sharding)?;
 
     let input: StringOr<FormationInput> = ct.parse_body(&body).map_err(AppError::bad_request)?;
 
@@ -203,12 +200,7 @@ pub async fn post_recall(
     HeaderVals(token, sharding): HeaderVals,
     body: Bytes,
 ) -> Result<impl IntoResponse, AppError> {
-    if sharding != app.sharding {
-        return Err(AppError::bad_request(format!(
-            "space_id sharding {} does not match server sharding {}",
-            sharding, app.sharding
-        )));
-    }
+    ensure_sharding(&app, sharding)?;
 
     let input: StringOr<RecallInput> = ct.parse_body(&body).map_err(AppError::bad_request)?;
 
@@ -245,12 +237,7 @@ pub async fn post_maintenance(
     HeaderVals(token, sharding): HeaderVals,
     body: Bytes,
 ) -> Result<impl IntoResponse, AppError> {
-    if sharding != app.sharding {
-        return Err(AppError::bad_request(format!(
-            "space_id sharding {} does not match server sharding {}",
-            sharding, app.sharding
-        )));
-    }
+    ensure_sharding(&app, sharding)?;
 
     let input: StringOr<MaintenanceInput> = ct.parse_body(&body).map_err(AppError::bad_request)?;
     let input = input
@@ -296,12 +283,7 @@ pub async fn execute_kip_readonly(
     HeaderVals(token, sharding): HeaderVals,
     body: Bytes,
 ) -> Result<impl IntoResponse, AppError> {
-    if sharding != app.sharding {
-        return Err(AppError::bad_request(format!(
-            "space_id sharding {} does not match server sharding {}",
-            sharding, app.sharding
-        )));
-    }
+    ensure_sharding(&app, sharding)?;
 
     let input: StringOr<anda_kip::Request> = ct.parse_body(&body).map_err(AppError::bad_request)?;
     let input = input
@@ -341,12 +323,7 @@ pub async fn get_or_init_user(
     HeaderVals(token, sharding): HeaderVals,
     body: Bytes,
 ) -> Result<impl IntoResponse, AppError> {
-    if sharding != app.sharding {
-        return Err(AppError::bad_request(format!(
-            "space_id sharding {} does not match server sharding {}",
-            sharding, app.sharding
-        )));
-    }
+    ensure_sharding(&app, sharding)?;
 
     let input: StringOr<GetOrInitUserInput> =
         ct.parse_body(&body).map_err(AppError::bad_request)?;
@@ -389,12 +366,7 @@ pub async fn get_conversation(
     Accept(ct, _): Accept,
     HeaderVals(token, sharding): HeaderVals,
 ) -> Result<impl IntoResponse, AppError> {
-    if sharding != app.sharding {
-        return Err(AppError::bad_request(format!(
-            "space_id sharding {} does not match server sharding {}",
-            sharding, app.sharding
-        )));
-    }
+    ensure_sharding(&app, sharding)?;
     let conversation_id: u64 = conversation_id
         .parse()
         .map_err(|_| AppError::bad_request("invalid conversation_id"))?;
@@ -431,12 +403,7 @@ pub async fn get_conversation_delta(
     Accept(ct, _): Accept,
     HeaderVals(token, sharding): HeaderVals,
 ) -> Result<impl IntoResponse, AppError> {
-    if sharding != app.sharding {
-        return Err(AppError::bad_request(format!(
-            "space_id sharding {} does not match server sharding {}",
-            sharding, app.sharding
-        )));
-    }
+    ensure_sharding(&app, sharding)?;
     let conversation_id: u64 = conversation_id
         .parse()
         .map_err(|_| AppError::bad_request("invalid conversation_id"))?;
@@ -476,12 +443,7 @@ pub async fn list_conversations(
     Accept(ct, _): Accept,
     HeaderVals(token, sharding): HeaderVals,
 ) -> Result<impl IntoResponse, AppError> {
-    if sharding != app.sharding {
-        return Err(AppError::bad_request(format!(
-            "space_id sharding {} does not match server sharding {}",
-            sharding, app.sharding
-        )));
-    }
+    ensure_sharding(&app, sharding)?;
 
     let now_ms = unix_ms();
     let t = app
@@ -520,12 +482,7 @@ pub async fn list_space_tokens(
     Accept(ct, _): Accept,
     HeaderVals(token, sharding): HeaderVals,
 ) -> Result<impl IntoResponse, AppError> {
-    if sharding != app.sharding {
-        return Err(AppError::bad_request(format!(
-            "space_id sharding {} does not match server sharding {}",
-            sharding, app.sharding
-        )));
-    }
+    ensure_sharding(&app, sharding)?;
 
     let now_ms = unix_ms();
     let _ = app
@@ -549,12 +506,7 @@ pub async fn add_space_token(
     HeaderVals(token, sharding): HeaderVals,
     body: Bytes,
 ) -> Result<impl IntoResponse, AppError> {
-    if sharding != app.sharding {
-        return Err(AppError::bad_request(format!(
-            "space_id sharding {} does not match server sharding {}",
-            sharding, app.sharding
-        )));
-    }
+    ensure_sharding(&app, sharding)?;
 
     let now_ms = unix_ms();
     let _ = app
@@ -589,12 +541,7 @@ pub async fn revoke_space_token(
     HeaderVals(token, sharding): HeaderVals,
     body: Bytes,
 ) -> Result<impl IntoResponse, AppError> {
-    if sharding != app.sharding {
-        return Err(AppError::bad_request(format!(
-            "space_id sharding {} does not match server sharding {}",
-            sharding, app.sharding
-        )));
-    }
+    ensure_sharding(&app, sharding)?;
 
     let now_ms = unix_ms();
     let _ = app
@@ -627,12 +574,7 @@ pub async fn update_space(
     HeaderVals(token, sharding): HeaderVals,
     body: Bytes,
 ) -> Result<impl IntoResponse, AppError> {
-    if sharding != app.sharding {
-        return Err(AppError::bad_request(format!(
-            "space_id sharding {} does not match server sharding {}",
-            sharding, app.sharding
-        )));
-    }
+    ensure_sharding(&app, sharding)?;
 
     let now_ms = unix_ms();
     let _ = app
@@ -665,12 +607,7 @@ pub async fn restart_formation(
     HeaderVals(token, sharding): HeaderVals,
     body: Bytes,
 ) -> Result<impl IntoResponse, AppError> {
-    if sharding != app.sharding {
-        return Err(AppError::bad_request(format!(
-            "space_id sharding {} does not match server sharding {}",
-            sharding, app.sharding
-        )));
-    }
+    ensure_sharding(&app, sharding)?;
 
     let now_ms = unix_ms();
     let _ = app
@@ -702,12 +639,7 @@ pub async fn get_byok(
     Accept(ct, _): Accept,
     HeaderVals(token, sharding): HeaderVals,
 ) -> Result<impl IntoResponse, AppError> {
-    if sharding != app.sharding {
-        return Err(AppError::bad_request(format!(
-            "space_id sharding {} does not match server sharding {}",
-            sharding, app.sharding
-        )));
-    }
+    ensure_sharding(&app, sharding)?;
 
     let now_ms = unix_ms();
     let _ = app
@@ -731,12 +663,7 @@ pub async fn update_byok(
     HeaderVals(token, sharding): HeaderVals,
     body: Bytes,
 ) -> Result<impl IntoResponse, AppError> {
-    if sharding != app.sharding {
-        return Err(AppError::bad_request(format!(
-            "space_id sharding {} does not match server sharding {}",
-            sharding, app.sharding
-        )));
-    }
+    ensure_sharding(&app, sharding)?;
 
     let now_ms = unix_ms();
     let _ = app
@@ -781,12 +708,7 @@ pub async fn create_space(
         .value()
         .map_err(|_| AppError::bad_request("invalid input"))?;
 
-    if sharding != app.sharding {
-        return Err(AppError::bad_request(format!(
-            "space_id sharding {} does not match server sharding {}",
-            sharding, app.sharding
-        )));
-    }
+    ensure_sharding(&app, sharding)?;
 
     let rt = app
         .admin_create_space(token.user, input.user, input.space_id, input.tier, now_ms)
@@ -814,12 +736,7 @@ pub async fn update_space_tier(
         .value()
         .map_err(|_| AppError::bad_request("invalid input"))?;
 
-    if sharding != app.sharding {
-        return Err(AppError::bad_request(format!(
-            "space_id sharding {} does not match server sharding {}",
-            sharding, app.sharding
-        )));
-    }
+    ensure_sharding(&app, sharding)?;
 
     if input.space_id != space_id {
         return Err(AppError::bad_request(format!(

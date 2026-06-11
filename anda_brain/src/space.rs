@@ -304,17 +304,23 @@ impl AppState {
         loop {
             tokio::select! {
                 _ = cancel_token.cancelled() => {
-                    // Flush all spaces before shutting down.
+                    // Close all spaces concurrently so shutdown stays fast even
+                    // with many loaded spaces.
                     let entries: Vec<(String, Arc<SpaceEntry>)> = {
                         let spaces = self.spaces.read().await;
                         spaces.iter().map(|(id, entry)| (id.clone(), entry.clone())).collect()
                     };
+                    let mut tasks = tokio::task::JoinSet::new();
                     for (id, entry) in entries {
-                        if let Some(space) = entry.cell.get()
-                            && let Err(err) = space.db.close().await {
-                                log::error!(target: "brain", space_id = id; "close on shutdown failed: {err:?}");
-                            }
+                        if let Some(space) = entry.cell.get().cloned() {
+                            tasks.spawn(async move {
+                                if let Err(err) = space.db.close().await {
+                                    log::error!(target: "brain", space_id = id; "close on shutdown failed: {err:?}");
+                                }
+                            });
+                        }
                     }
+                    while tasks.join_next().await.is_some() {}
                     return;
                 }
                 _ = tokio::time::sleep(flush_interval) => {}
@@ -332,28 +338,29 @@ impl AppState {
         };
 
         for (id, entry) in &entries {
-            let Some(space) = entry.cell.get() else {
-                continue;
-            };
-
             if self
-                .try_remove_idle_space(id, entry, now, idle_timeout_ms)
+                .try_evict_idle_space(id, entry, now, idle_timeout_ms)
                 .await
             {
-                if let Err(err) = space.close().await {
-                    log::error!(target: "brain", space_id = id; "close before eviction failed: {err:?}");
-                }
                 log::warn!(target: "brain", space_id = id; "space evicted due to inactivity");
-            } else {
-                // Periodic flush for active spaces
-                if let Err(err) = space.flush().await {
-                    log::error!(target: "brain", space_id = id; "periodic flush failed: {err:?}");
-                }
+                continue;
+            }
+
+            // Periodic flush for active spaces
+            if let Some(space) = entry.cell.get()
+                && let Err(err) = space.flush().await
+            {
+                log::error!(target: "brain", space_id = id; "periodic flush failed: {err:?}");
             }
         }
     }
 
-    async fn try_remove_idle_space(
+    /// Evicts an idle space entry, closing its database *before* removing it
+    /// from the map. The close happens while holding the map write lock so a
+    /// concurrent `load_space` cannot connect a second AndaDB instance to the
+    /// same storage while the old one is still flushing. Idle spaces were
+    /// already flushed by the periodic pass, so this close is cheap.
+    async fn try_evict_idle_space(
         &self,
         id: &str,
         entry: &Arc<SpaceEntry>,
@@ -368,19 +375,34 @@ impl AppState {
             return false;
         }
 
-        let Some(space) = entry.cell.get() else {
-            return false;
-        };
         let is_idle = now_ms.saturating_sub(entry.last_access_ms()) > idle_timeout_ms;
-        if space.pinned || !is_idle || space.is_processing() {
+        if !is_idle {
             return false;
         }
 
-        // Map + background snapshot are the only expected SpaceEntry refs here;
-        // OnceCell is the only expected Space ref. Anything more means a request
-        // has recently loaded or is still using this space, so eviction waits.
-        if Arc::strong_count(entry) > 2 || Arc::strong_count(space) > 1 {
-            return false;
+        match entry.cell.get() {
+            Some(space) => {
+                if space.pinned || space.is_processing() {
+                    return false;
+                }
+                // Map + background snapshot are the only expected SpaceEntry refs here;
+                // OnceCell is the only expected Space ref. Anything more means a request
+                // has recently loaded or is still using this space, so eviction waits.
+                if Arc::strong_count(entry) > 2 || Arc::strong_count(space) > 1 {
+                    return false;
+                }
+                if let Err(err) = space.close().await {
+                    log::error!(target: "brain", space_id = id; "close before eviction failed: {err:?}");
+                }
+            }
+            None => {
+                // Initialization never succeeded (e.g. probes for unknown space
+                // IDs). Drop the unused placeholder so such probes cannot grow
+                // the map unboundedly.
+                if Arc::strong_count(entry) > 2 {
+                    return false;
+                }
+            }
         }
 
         spaces.remove(id).is_some()
@@ -453,6 +475,12 @@ impl Space {
         scope: TokenScope,
         now_ms: u64,
     ) -> Result<(), BoxError> {
+        // Space tokens always carry the "ST" prefix. Rejecting other keys here
+        // keeps non-token extensions (e.g. "byok", "tier") out of the
+        // credential lookup below.
+        if !token.starts_with("ST") {
+            return Err("invalid space token".into());
+        }
         let token = self
             .db
             .set_extension_from_with::<_, SpaceToken>(token, |v| {
@@ -953,14 +981,18 @@ impl Space {
 
         let this_clone = this.clone();
         tokio::spawn(async move {
-            let _ = this_clone.maintenance.init().await;
-            let _ = this_clone.recall.init().await;
-            if let Some(conversation) = this_clone.formation.get_processed() {
-                // Resume formation process if it was interrupted before
-                let _ = this_clone
-                    .restart_formation(SELF_USER_ID, conversation + 1)
-                    .await;
+            if let Err(err) = this_clone.maintenance.init().await {
+                log::warn!(target: "brain", space_id = this_clone.id; "maintenance history init failed: {err:?}");
             }
+            if let Err(err) = this_clone.recall.init().await {
+                log::warn!(target: "brain", space_id = this_clone.id; "recall history init failed: {err:?}");
+            }
+            // Resume formation if it was interrupted before. A missing marker
+            // means nothing was processed yet, so resume from the beginning.
+            let conversation = this_clone.formation.get_processed().unwrap_or_default();
+            let _ = this_clone
+                .restart_formation(SELF_USER_ID, conversation + 1)
+                .await;
         });
 
         Ok(this)
@@ -1037,9 +1069,10 @@ impl BrainHook for Hooks {
             None => return,
         };
 
-        if let Some(id) = space.formation.get_processed() {
-            let _ = space.restart_formation(SELF_USER_ID, id + 1).await;
-        }
+        // A missing marker means nothing was processed yet; resume from the
+        // beginning so conversations queued during maintenance are not stuck.
+        let id = space.formation.get_processed().unwrap_or_default();
+        let _ = space.restart_formation(SELF_USER_ID, id + 1).await;
     }
 
     async fn try_start_maintenance(&self, formation_id: DocumentId) -> Option<DocumentId> {
@@ -1049,47 +1082,30 @@ impl BrainHook for Hooks {
         };
 
         let at = space.maintenance.get_processed_at();
-        let timestamp = Some(rfc3339_datetime_now());
-        let input = if formation_id >= at.full + 168 {
-            Some(MaintenanceInput {
-                trigger: "scheduled".to_string(),
-                scope: MaintenanceScope::Full,
-                timestamp,
-                parameters: None,
-                formation_id,
-            })
+        let scope = if formation_id >= at.full + 168 {
+            MaintenanceScope::Full
         } else if formation_id >= at.quick.max(at.full) + 42 {
-            Some(MaintenanceInput {
-                trigger: "scheduled".to_string(),
-                scope: MaintenanceScope::Quick,
-                timestamp,
-                parameters: None,
-                formation_id,
-            })
+            MaintenanceScope::Quick
         } else if formation_id >= at.daydream.max(at.quick).max(at.full) + 21 {
-            Some(MaintenanceInput {
-                trigger: "scheduled".to_string(),
-                scope: MaintenanceScope::Daydream,
-                timestamp,
-                parameters: None,
-                formation_id,
-            })
+            MaintenanceScope::Daydream
         } else {
-            None
+            return None;
         };
 
-        if let Some(input) = input {
-            match space.maintenance(SELF_USER_ID, input).await {
-                Ok(rt) => {
-                    return rt.conversation;
-                }
-                Err(err) => {
-                    log::error!(target: "brain", formation_id; "scheduled maintenance failed to start: {}", err);
-                }
+        let input = MaintenanceInput {
+            trigger: "scheduled".to_string(),
+            scope,
+            timestamp: Some(rfc3339_datetime_now()),
+            parameters: None,
+            formation_id,
+        };
+        match space.maintenance(SELF_USER_ID, input).await {
+            Ok(rt) => rt.conversation,
+            Err(err) => {
+                log::error!(target: "brain", formation_id; "scheduled maintenance failed to start: {}", err);
+                None
             }
         }
-
-        None
     }
 }
 // grcov-excl-stop
@@ -1599,11 +1615,11 @@ mod tests {
         assert!(app.spaces.read().await.contains_key(space_id));
 
         entry.last_access_ms.store(0, Ordering::Relaxed);
-        assert!(!app.try_remove_idle_space(space_id, &entry, 10_000, 1).await);
+        assert!(!app.try_evict_idle_space(space_id, &entry, 10_000, 1).await);
 
         let wrong_entry = Arc::new(SpaceEntry::new());
         assert!(
-            !app.try_remove_idle_space(space_id, &wrong_entry, 10_000, 1)
+            !app.try_evict_idle_space(space_id, &wrong_entry, 10_000, 1)
                 .await
         );
 
@@ -1621,7 +1637,7 @@ mod tests {
 
         let missing_entry = Arc::new(SpaceEntry::new());
         assert!(
-            !app.try_remove_idle_space("missing_space", &missing_entry, 10_000, 1)
+            !app.try_evict_idle_space("missing_space", &missing_entry, 10_000, 1)
                 .await
         );
 
@@ -1631,9 +1647,29 @@ mod tests {
             spaces.get("never_created_space").unwrap().clone()
         };
         assert!(
-            !app.try_remove_idle_space("never_created_space", &uninitialized, 10_000, 1)
+            !app.try_evict_idle_space("never_created_space", &uninitialized, 10_000, 1)
                 .await
         );
+    }
+
+    #[tokio::test]
+    async fn flush_and_evict_removes_idle_uninitialized_placeholders() {
+        let app = test_app_state("placeholder_eviction");
+        assert!(app.load_space("placeholder_space", false).await.is_err());
+        {
+            let spaces = app.spaces.read().await;
+            let entry = spaces.get("placeholder_space").unwrap();
+            assert!(!entry.cell.initialized());
+        }
+
+        // Not idle yet: the placeholder entry is kept for retrying.
+        app.flush_and_evict_once(unix_ms(), 10_000).await;
+        assert!(app.spaces.read().await.contains_key("placeholder_space"));
+
+        // Idle: the placeholder is dropped so probes for unknown space IDs
+        // cannot grow the map unboundedly.
+        app.flush_and_evict_once(unix_ms() + 20_000, 10_000).await;
+        assert!(!app.spaces.read().await.contains_key("placeholder_space"));
     }
 
     #[tokio::test]

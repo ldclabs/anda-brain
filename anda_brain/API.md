@@ -387,7 +387,7 @@ export interface KipResponse<T> {
 - Purpose: Add a Space Token
 - Auth: Must pass CWT `write` (user management-level auth)
 - Request body: `AddSpaceTokenInput`
-- Response: `RpcResponse<SpaceToken>` (new token, usually prefixed with `ST`)
+- Response: `RpcResponse<SpaceToken>` (new token, always prefixed with `ST`)
 
 ### POST `/v1/{space_id}/management/revoke_space_token`
 

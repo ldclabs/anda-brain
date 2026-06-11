@@ -387,7 +387,7 @@ export interface KipResponse<T> {
 - 作用：新增 Space Token
 - 鉴权：必须通过 CWT `write`（用户管理级鉴权）
 - 请求体：`AddSpaceTokenInput`
-- 响应：`RpcResponse<SpaceToken>`（新 token，前缀通常为 `ST`）
+- 响应：`RpcResponse<SpaceToken>`（新 token，前缀总是 `ST`）
 
 ### POST `/v1/{space_id}/management/revoke_space_token`
 

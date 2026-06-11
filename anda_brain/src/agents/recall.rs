@@ -25,7 +25,7 @@ use tokio::time::timeout;
 
 use anda_kip::{KipError, KipErrorCode, Request, Response};
 
-use super::{BrainHook, SELF_USER_ID};
+use super::{BrainHook, SELF_USER_ID, push_completed_history};
 use crate::types::RecallInput;
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/BrainRecall.md");
@@ -200,7 +200,13 @@ impl RecallAgent {
             .conversations
             .list_conversations_by_user(&SELF_USER_ID, None, Some(3))
             .await?;
-        *self.history.write() = conversations.into_iter().map(Document::from).collect();
+        // Only completed conversations belong in the model context, matching
+        // the runtime push_completed_history behavior.
+        *self.history.write() = conversations
+            .into_iter()
+            .filter(|c| c.status == ConversationStatus::Completed)
+            .map(Document::from)
+            .collect();
         Ok(())
     }
 
@@ -375,18 +381,12 @@ impl Agent<AgentCtx> for RecallAgent {
                     ConversationStatus::Completed
                 };
                 conversation.usage = output.usage.clone();
-                conversation.updated_at = now_ms;
+                conversation.updated_at = unix_ms();
 
                 if let Some(ref failed_reason) = output.failed_reason {
                     conversation.failed_reason = Some(failed_reason.clone());
                 } else {
-                    let doc: Document = conversation.clone().into();
-                    let mut history = self.history.write();
-                    history.push_back(doc);
-                    let len = history.len();
-                    if len > 3 {
-                        history.drain(0..(len - 3));
-                    }
+                    push_completed_history(&self.history, &conversation, 3);
                 }
 
                 if let Ok(changes) = conversation.to_changes() {
