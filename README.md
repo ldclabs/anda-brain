@@ -166,10 +166,10 @@ Brain provides three critical dimensions for this awakening:
 
 Anda Brain is designed to be the "memory engine" for the next generation of AI applications, ranging from hyper-personalized consumer agents to enterprise-grade AI brains.
 
-### 1. Personal Agents: A Powerful Cloud-Based Graph Brain
+### 1. Personal Agents: A Powerful Graph Brain
 
 Open-source local agents (like **OpenClaw**) have proven the massive demand for personal AI assistants. However, relying purely on local Markdown files and SQLite limits the agent's ability to process highly complex, interconnected, lifelong memories, while also generating high Token costs.
-For a concrete example, [anda-bot](https://github.com/ldclabs/anda-bot) is an intelligent agent built on top of Anda Brain, using Brain as its long-term memory and cognitive backbone.
+For a concrete example, [**Anda Bot**](https://github.com/ldclabs/anda-bot) is an open-source AI agent built on top of Anda Brain, using Brain as its long-term memory and cognitive backbone.
 *   **Brain Upgrade:** Seamlessly insert Brain into agent frameworks via customized ContextEngines. It acts as a robust, structured graph memory backend.
 *   **The Result:** The agent truly "understands" the user's life graph—tracking relationships, shifting preferences, project histories, and episodic events across years—without bloating the context window.
 
@@ -223,17 +223,18 @@ For complex businesses, Vector RAG is insufficient. Enterprises have structured 
 
 ## Quick Start
 
-Anda Brain is [open-source software](https://github.com/ldclabs/anda-brain). You can deploy it yourself or use our cloud-based SaaS service.
+Anda Brain is [open-source software](https://github.com/ldclabs/anda-brain), designed to be **self-hosted**.
+
+> **Note:** The hosted cloud service (`brain.anda.ai`) and its console (`anda.ai/brain`) have been discontinued. Deploy your own instance instead — it only takes a few minutes.
 
 👉 **[Anda Brain Quick Start](https://github.com/ldclabs/anda-brain/blob/main/deploy/quick_start.md)**: Provides a minimal viable deployment guide from 0 to 1.
 
-- **Product Website:** [https://brain.anda.ai](https://brain.anda.ai/)
-- **Console (Manage Brain Spaces & API Keys):** [https://anda.ai/brain](https://anda.ai/brain)
-
 Get started in 3 steps:
-1. Create a **Brain Space** (`spaceId`) in the [Console](https://anda.ai/brain).
-2. Generate an **API Key** (`spaceToken`).
-3. Call the Formation / Recall / Maintenance APIs, or let your agent framework read [SKILL.md](https://brain.anda.ai/SKILL.md) for one-click integration.
+1. **Deploy the service** — run the binary or Docker image (see [Running Locally](#running-locally) below).
+2. Create a **Brain Space** (`spaceId`) via `POST /admin/create_space`, then generate an **API Key** (`spaceToken`) via `POST /v1/{space_id}/management/add_space_token`.
+3. Call the Formation / Recall / Maintenance APIs, or let your agent framework read [SKILL.md](https://github.com/ldclabs/anda-brain/blob/main/skills/anda-brain/SKILL.md) (your deployment also serves it at `/SKILL.md`) for one-click integration.
+
+Want a ready-to-run agent instead of building your own? Check out [**Anda Bot**](https://github.com/ldclabs/anda-bot) — an open-source AI agent built on Anda Brain.
 
 For detailed technical documentation, API specs, and integration guides, see [anda_brain/README.md](https://github.com/ldclabs/anda-brain/tree/main/anda_brain).
 
@@ -244,10 +245,10 @@ For detailed technical documentation, API specs, and integration guides, see [an
 ./anda_brain
 
 # Run with Local File System storage (great for local agents like OpenClaw)
-./anda_brain -- local --db ./data
+./anda_brain local --db ./data
 
 # Run with AWS S3 storage (for enterprise cloud deployment)
-./anda_brain -- aws --bucket my-bucket --region us-east-1
+./anda_brain aws --bucket my-bucket --region us-east-1
 ```
 
 ### Integration Examples
@@ -259,8 +260,8 @@ curl -sX POST https://your-brain-host/v1/my_space_001/formation \
   -H "Content-Type: application/json" \
   -d '{
     "messages": [
-      {"role": "user", "content": "I work at Acme Corp as a senior engineer".},
-      {"role": "assistant", "content": "Nice to meet you! Noted that you are a senior engineer at Acme Corp".}
+      {"role": "user", "content": "I work at Acme Corp as a senior engineer."},
+      {"role": "assistant", "content": "Nice to meet you! Noted that you are a senior engineer at Acme Corp."}
     ],
     "context": {"counterparty": "user_123", "agent": "onboarding_bot"},
     "timestamp": "2026-03-09T10:30:00Z"
@@ -285,7 +286,7 @@ For full CLI usage, please refer to [anda-cli/README.md](https://github.com/ldcl
 ```bash
 # Submit memory formation (JSON messages)
 anda-cli --space-id my_space --token $TOKEN formation \
-  --messages '[{"role":"user"",content":"Hello"},{"role":"assistant"",content":"Hi there!"}]'
+  --messages '[{"role":"user","content":"Hello"},{"role":"assistant","content":"Hi there!"}]'
 
 # Submit memory formation (Plain text)
 anda-cli --space-id my_space --token $TOKEN formation \

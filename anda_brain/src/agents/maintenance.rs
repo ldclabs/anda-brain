@@ -64,10 +64,13 @@ impl MaintenanceAgent {
             .list_conversations_by_user(&SELF_USER_ID, None, Some(2))
             .await?;
         // Only completed conversations belong in the model context, matching
-        // the runtime push_completed_history behavior.
+        // the runtime push_completed_history behavior. The list is newest
+        // first while the runtime queue runs oldest -> newest, so reverse it;
+        // otherwise the next push_back would evict the newest entry first.
         *self.history.write() = conversations
             .into_iter()
             .filter(|c| c.status == ConversationStatus::Completed)
+            .rev()
             .map(Document::from)
             .collect();
         Ok(())
@@ -140,6 +143,12 @@ impl Agent<AgentCtx> for MaintenanceAgent {
         prompt: String, // MaintenanceInput serialized as JSON string
         _resources: Vec<Resource>,
     ) -> Result<AgentOutput, BoxError> {
+        // Reject malformed input before claiming the processing slot; a bad
+        // prompt would otherwise burn a full LLM maintenance cycle that can
+        // never record its processed marker.
+        let maintenance_input = serde_json::from_str::<MaintenanceInput>(&prompt)
+            .map_err(|err| format!("invalid MaintenanceInput: {err}"))?;
+
         // Prevent concurrent maintenance runs
         if self
             .processing
@@ -155,7 +164,6 @@ impl Agent<AgentCtx> for MaintenanceAgent {
 
         let caller = ctx.caller();
         let now_ms = unix_ms();
-        let maintenance_input = serde_json::from_str::<MaintenanceInput>(&prompt).ok();
 
         let mut conversation = Conversation {
             user: *caller,
@@ -186,15 +194,14 @@ impl Agent<AgentCtx> for MaintenanceAgent {
                 let _guard = guard;
                 agent.process_one(&ctx_clone, &mut conversation).await;
                 if conversation.status == ConversationStatus::Completed
-                    && let Some(input) = maintenance_input
                     && let Err(err) = agent
-                        .set_processed_at(input.scope, input.formation_id)
+                        .set_processed_at(maintenance_input.scope, maintenance_input.formation_id)
                         .await
                 {
                     log::error!(
                         target: "brain",
                         conversation = conversation._id,
-                        formation_id = input.formation_id;
+                        formation_id = maintenance_input.formation_id;
                         "failed to persist maintenance processed marker: {err:?}"
                     );
                 }
@@ -572,6 +579,58 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(maintenance.get_processed_at().quick, 7);
+    }
+
+    #[tokio::test]
+    async fn init_restores_history_in_oldest_first_order() {
+        let app = test_app_state_with_completer("maintenance_init_order", FinalCompleter);
+        let space = create_loaded_space(&app, "maintenance_init_order").await;
+        let maintenance = space.maintenance_for_test();
+
+        for _ in 0..3 {
+            let conversation = Conversation {
+                user: SELF_USER_ID,
+                status: ConversationStatus::Completed,
+                label: Some("maintenance".to_string()),
+                ..Default::default()
+            };
+            maintenance
+                .conversations
+                .add_conversation(ConversationRef::from(&conversation))
+                .await
+                .unwrap();
+        }
+
+        maintenance.init().await.unwrap();
+
+        let ids: Vec<u64> = maintenance
+            .history
+            .read()
+            .iter()
+            .map(|doc| doc.metadata.get("_id").and_then(|v| v.as_u64()).unwrap())
+            .collect();
+        // The two newest completed conversations, ordered oldest -> newest to
+        // match the runtime push_completed_history queue.
+        assert_eq!(ids, vec![2, 3]);
+    }
+
+    #[tokio::test]
+    async fn run_rejects_invalid_maintenance_input_before_processing() {
+        let app = test_app_state_with_completer("maintenance_invalid_input", FinalCompleter);
+        let space = create_loaded_space(&app, "maintenance_invalid_input").await;
+        let maintenance = space.maintenance_for_test();
+        let ctx = space
+            .ctx_for_test(SELF_USER_ID, MaintenanceAgent::NAME)
+            .unwrap();
+
+        let err =
+            Agent::<AgentCtx>::run(maintenance.as_ref(), ctx, "not a json".to_string(), vec![])
+                .await
+                .unwrap_err();
+
+        assert!(err.to_string().contains("invalid MaintenanceInput"));
+        assert!(!maintenance.is_processing());
+        assert_eq!(maintenance.conversations.conversations.len(), 0);
     }
 
     #[tokio::test]

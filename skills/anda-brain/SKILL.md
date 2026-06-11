@@ -17,8 +17,8 @@ description: |
   - "what do we know about X?", "who is X?"
   - "run memory maintenance", "consolidate memory"
 metadata:
-  version: 0.1.0
-  url: https://brain.anda.ai/SKILL.md
+  version: 0.2.0
+  url: https://github.com/ldclabs/anda-brain/blob/main/skills/anda-brain/SKILL.md
   keywords:
     - long-term memory
     - agent memory
@@ -33,7 +33,11 @@ metadata:
 
 # 🧠 Anda Brain
 
-Persistent long-term memory service for LLM agents, powered by a Knowledge Graph (Cognitive Nexus) and KIP (Knowledge Interaction Protocol). Anda Brain is [open-source software](https://github.com/ldclabs/anda-brain) — you can self-host it or use the cloud SaaS at `https://brain.anda.ai`.
+Persistent long-term memory service for LLM agents, powered by a Knowledge Graph (Cognitive Nexus) and KIP (Knowledge Interaction Protocol). Anda Brain is [open-source software](https://github.com/ldclabs/anda-brain) designed to be **self-hosted** — deploy your own instance with the [Quick Start guide](https://github.com/ldclabs/anda-brain/blob/main/deploy/quick_start.md).
+
+> **Note:** The hosted cloud service (`brain.anda.ai`) and its console (`anda.ai/brain`) have been discontinued. All examples below assume your own deployment.
+
+For a complete, ready-to-run agent built on Anda Brain, see [Anda Bot](https://github.com/ldclabs/anda-bot).
 
 Business agents interact entirely through **natural language** and a simple REST API — no KIP knowledge required.
 
@@ -52,6 +56,7 @@ Three operational modes cover the full memory lifecycle:
 |------|----------|---------|------|
 | **Formation** | `POST /v1/{space_id}/formation` | Encode conversations into structured memory | `write` (CWT or space token) |
 | **Recall** | `POST /v1/{space_id}/recall` | Query memory with natural language | `read` (CWT or space token) |
+| **Maintenance** | `POST /v1/{space_id}/maintenance` | Trigger memory consolidation & pruning cycle | `write` (CWT or space token) |
 
 Supporting endpoints:
 
@@ -61,6 +66,8 @@ Supporting endpoints:
 | `GET` | `/info` | Service info (name, version, sharding) | — |
 | `GET` | `/SKILL.md` | This skill description | — |
 | `GET` | `/v1/{space_id}/info` | Space status and statistics | `read` (CWT or space token) |
+| `GET` | `/v1/{space_id}/formation_status` | Formation progress (lightweight monitoring) | `read` (CWT or space token) |
+| `POST` | `/v1/{space_id}/execute_kip_readonly` | Execute a read-only KIP request | `read` (CWT or space token) |
 | `GET` | `/v1/{space_id}/conversations/{conversation_id}` | Get one conversation detail | `read` (CWT or space token) |
 | `GET` | `/v1/{space_id}/conversations/{conversation_id}/delta` | Get incremental conversation updates | `read` (CWT or space token) |
 | `GET` | `/v1/{space_id}/conversations` | List conversations (cursor pagination) | `read` (CWT or space token) |
@@ -282,7 +289,7 @@ Content-Type: application/json
 | `context.agent` | `string` | No | Calling agent identifier |
 | `context.source` | `string` | No | Identifier of the source of the current interaction content |
 | `context.topic` | `string` | No | Conversation topic |
-| `timestamp` | `string` | Yes | ISO 8601 timestamp of the conversation |
+| `timestamp` | `string` | No (recommended) | ISO 8601 timestamp of the conversation |
 
 **Tips for best results:**
 
@@ -374,14 +381,14 @@ Authorization: Bearer <token>
 
 ## Integration Pattern
 
-A typical integration workflow for a business agent (use `brain.anda.ai` as the host):
+A typical integration workflow for a business agent (replace `your-brain-host` with your deployment address, e.g. `localhost:8042`):
 
 ### 1. Remember: Send conversations for memory encoding
 
 After each meaningful conversation with a user, send the messages to Formation:
 
 ```bash
-curl -sX POST https://brain.anda.ai/v1/my_space_001/formation \
+curl -sX POST https://your-brain-host/v1/my_space_001/formation \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -399,7 +406,7 @@ curl -sX POST https://brain.anda.ai/v1/my_space_001/formation \
 Before generating a response, check if relevant memory exists:
 
 ```bash
-curl -sX POST https://brain.anda.ai/v1/my_space_001/recall \
+curl -sX POST https://your-brain-host/v1/my_space_001/recall \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -414,15 +421,13 @@ curl -sX POST https://brain.anda.ai/v1/my_space_001/recall \
 
 The [`anda-brain`](https://github.com/ldclabs/anda-brain/tree/main/anda-brain-openclaw) plugin integrates Anda Brain into [OpenClaw](https://openclaw.ai/) agents, providing automatic memory encoding and a `recall_memory` tool — no manual API calls needed.
 
-### Prerequisites: Create a Brain Space (for cloud SaaS users)
+### Prerequisites: Deploy Anda Brain and Create a Space
 
-Before installing the plugin, you need a `spaceId` and `spaceToken`:
+Before installing the plugin, you need a running Anda Brain deployment plus a `spaceId` and `spaceToken`:
 
-1. Go to the **Anda Brain Console**: [https://anda.ai/brain](https://anda.ai/brain)
-2. Sign in and **create a new brain space** — you will get your `spaceId`.
-3. In the space settings, **create an API Key** — this is your `spaceToken`.
-
-> If you are self-hosting Anda Brain, create spaces via the admin API instead (see [Integration Pattern](#integration-pattern) above).
+1. **Deploy Anda Brain** — see the [Quick Start guide](https://github.com/ldclabs/anda-brain/blob/main/deploy/quick_start.md) (binary or Docker, a few minutes).
+2. **Create a brain space** via `POST /admin/create_space` — the `space_id` you choose is your `spaceId`.
+3. **Create an API key** via `POST /v1/{space_id}/management/add_space_token` — the returned token is your `spaceToken`.
 
 ### Install
 
@@ -441,7 +446,7 @@ openclaw plugins install anda-brain
         "config": {
           "spaceId": "my_space_001",
           "spaceToken": "STxxxxx",
-          "baseUrl": "https://brain.anda.ai" // or "http://localhost:8042" for self-hosted/local
+          "baseUrl": "http://localhost:8042" // your Anda Brain deployment URL
         }
       }
     }
@@ -456,9 +461,9 @@ openclaw gateway restart
 
 Required fields:
 
-- `spaceId`: your Brain space ID (created at [anda.ai/brain](https://anda.ai/brain))
-- `spaceToken`: your space API Key (created at [anda.ai/brain](https://anda.ai/brain))
-- `baseUrl`: optional, defaults to `https://brain.anda.ai`; set this to your own deployment for self-hosted or local use
+- `spaceId`: your Brain space ID (created via `POST /admin/create_space`)
+- `spaceToken`: your space API Key (created via `POST /v1/{space_id}/management/add_space_token`)
+- `baseUrl`: your Anda Brain deployment URL (e.g. `http://localhost:8042`) — always set this; the legacy default `https://brain.anda.ai` has been discontinued
 
 ### What It Does
 
@@ -473,7 +478,7 @@ Required fields:
 |--------|------|----------|---------|-------------|
 | `spaceId` | `string` | Yes | — | Memory space ID |
 | `spaceToken` | `string` | Yes | — | Space token for API authentication |
-| `baseUrl` | `string` | No | `https://brain.anda.ai` | Anda Brain service URL |
+| `baseUrl` | `string` | Yes (in practice) | `https://brain.anda.ai` (discontinued) | Your Anda Brain deployment URL — always set this |
 | `defaultContext` | `InputContext` | No | — | Default context included with every request (`counterparty`, `agent`, `source`, `topic`) |
 | `formationTimeoutMs` | `number` | No | `30000` | Formation request timeout (ms) |
 | `recallTimeoutMs` | `number` | No | `120000` | Recall request timeout (ms) — recall may take 10–100s |
@@ -488,6 +493,12 @@ The plugin registers a `recall_memory` tool that the LLM can invoke:
 | `context.counterparty` | `string` | No | Current user identifier |
 | `context.agent` | `string` | No | Calling agent identifier |
 | `context.topic` | `string` | No | Topic hint for disambiguation |
+
+---
+
+## Anda Bot
+
+[**Anda Bot**](https://github.com/ldclabs/anda-bot) is a complete, open-source AI agent built on Anda Brain, using Brain as its long-term memory and cognitive backbone. Use it directly, or as a reference implementation for integrating Anda Brain into your own agent.
 
 ---
 
@@ -513,12 +524,13 @@ The service is configured via CLI arguments and environment variables:
 | `LISTEN_ADDR` | `127.0.0.1:8042` | Listen address |
 | `ED25519_PUBKEYS` | — | Comma-separated Base64-encoded Ed25519 public keys; if empty, API authentication is disabled |
 | `MODEL_FAMILY` | `anthropic` | Model family to use for encoding and recall (e.g., `gemini`, `anthropic`, `openai`) |
-| `MODEL_API_KEY` | — | DeepSeek API key |
-| `MODEL_API_BASE` | `https://api.deepseek.com/anthropic` | DeepSeek API base URL |
+| `MODEL_API_KEY` | — | API key for the configured model provider |
+| `MODEL_API_BASE` | `https://api.deepseek.com/anthropic` | Model API base URL |
 | `MODEL_NAME` | `deepseek-v4-pro` | LLM model for agents |
 | `HTTPS_PROXY` | — | HTTPS proxy URL |
 | `SHARDING_IDX` | `0` | Shard index for this instance |
 | `MANAGERS` | — | Comma-separated manager principal IDs |
+| `CORS_ORIGINS` | — | CORS allowed origins: empty = disabled, `*` = allow all, or comma-separated origins |
 
 **Storage backends:**
 

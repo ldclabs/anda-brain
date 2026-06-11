@@ -502,6 +502,12 @@ impl Space {
     }
 
     pub async fn revoke_space_token(&self, token: &str) -> Result<bool, BoxError> {
+        // Same guard as verify_space_token: the token is caller-supplied, so
+        // restricting it to the "ST" prefix keeps non-token extensions
+        // (e.g. "byok", "tier", "owner") safe from deletion through this API.
+        if !token.starts_with("ST") {
+            return Err("invalid space token".into());
+        }
         let rt = self.db.remove_extension(token).await?;
         Ok(rt.is_some())
     }
@@ -768,7 +774,9 @@ impl Space {
             }
             _ => self.memory.conversations.clone(),
         };
-        let limit = limit.unwrap_or(10).min(100);
+        // 0 means "no limit" to the database (an unbounded scan), and an empty
+        // page would panic on `rt.first().unwrap()` below; clamp instead.
+        let limit = limit.unwrap_or(10).clamp(1, 100);
         let cursor = match BTree::from_cursor::<u64>(&cursor)? {
             Some(cursor) => cursor,
             None => collection.max_document_id() + 1,
@@ -1759,6 +1767,13 @@ mod tests {
         assert!(space.revoke_space_token("STtest-token").await.unwrap());
         assert!(!space.revoke_space_token("STtest-token").await.unwrap());
 
+        // Platform-managed extensions must not be deletable through the
+        // space-token revoke API.
+        assert!(space.revoke_space_token("tier").await.is_err());
+        assert_eq!(space.get_tier().tier, 3);
+        assert!(space.revoke_space_token("byok").await.is_err());
+        assert!(space.get_byok().is_some());
+
         space
             .update(
                 UpdateSpaceInput {
@@ -1931,6 +1946,38 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn list_conversations_clamps_limit_to_safe_bounds() {
+        let app = test_app_state("list_limit_clamp");
+        let space = create_loaded_space(&app, "list_limit_clamp").await;
+
+        // limit=0 on an empty collection must not panic on the cursor below.
+        let (items, cursor) = space.list_conversations(None, None, Some(0)).await.unwrap();
+        assert!(items.is_empty());
+        assert!(cursor.is_none());
+
+        for idx in 0..3 {
+            let conversation = Conversation {
+                user: SELF_USER_ID,
+                status: ConversationStatus::Completed,
+                created_at: idx,
+                updated_at: idx,
+                label: Some("formation".to_string()),
+                ..Default::default()
+            };
+            space
+                .memory
+                .add_conversation(ConversationRef::from(&conversation))
+                .await
+                .unwrap();
+        }
+
+        // limit=0 is clamped to 1 instead of dumping the whole collection.
+        let (items, cursor) = space.list_conversations(None, None, Some(0)).await.unwrap();
+        assert_eq!(items.len(), 1);
+        assert!(cursor.is_some());
     }
 
     #[tokio::test]

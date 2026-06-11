@@ -4,6 +4,8 @@ A dedicated LLM-powered memory management service that maintains a persistent **
 
 Business agents interact entirely through natural language and a REST API — no KIP knowledge required.
 
+Anda Brain is designed to be **self-hosted** (the hosted cloud service has been discontinued). For a complete agent built on Anda Brain, see [Anda Bot](https://github.com/ldclabs/anda-bot).
+
 ## Architecture
 
 ```
@@ -121,9 +123,9 @@ Detailed API docs (with TypeScript request/response types):
 | `POST`  | `/v1/{space_id}/management/add_space_token`            | Add a space token                                                             | `write` (CWT)                |
 | `POST`  | `/v1/{space_id}/management/revoke_space_token`         | Revoke a space token                                                          | `write` (CWT)                |
 | `PATCH` | `/v1/{space_id}/management/update_space`               | Update space information (name, description, public/private)                  | `write` (CWT)                |
-| `PATCH` | `/v1/{space_id}/management/restart_formation`          | Restart a formation task (manager only)                                       | `write` (CWT)                |
-| `GET`   | `/v1/{space_id}/management/space_byok`                 | Get BYOK (Bring Your Own Key) configuration (manager only)                    | `read` (CWT)                 |
-| `PATCH` | `/v1/{space_id}/management/space_byok`                 | Update BYOK (Bring Your Own Key) configuration (manager only)                 | `write` (CWT)                |
+| `PATCH` | `/v1/{space_id}/management/restart_formation`          | Restart a formation task                                                      | `write` (CWT)                |
+| `GET`   | `/v1/{space_id}/management/space_byok`                 | Get BYOK (Bring Your Own Key) configuration                                   | `read` (CWT)                 |
+| `PATCH` | `/v1/{space_id}/management/space_byok`                 | Update BYOK (Bring Your Own Key) configuration                                | `write` (CWT)                |
 | `POST`  | `/admin/{space_id}/update_space_tier`                  | Update a space tier (manager only)                                            | `write` (CWT)                |
 | `POST`  | `/admin/create_space`                                  | Create a new space (manager only)                                             | `write` (CWT)                |
 
@@ -218,7 +220,7 @@ Submit conversation messages for memory encoding. Processing is asynchronous —
 | `context.agent`        | `string`    | No       | Calling agent identifier                                        |
 | `context.source`       | `string`    | No       | Identifier of the source of the current interaction content     |
 | `context.topic`        | `string`    | No       | Conversation topic                                              |
-| `timestamp`            | `string`    | Yes      | ISO 8601 timestamp                                              |
+| `timestamp`            | `string`    | No (recommended) | ISO 8601 timestamp                                      |
 
 **Response:**
 ```json
@@ -283,9 +285,9 @@ Trigger a memory maintenance cycle. Runs asynchronously with single-execution gu
 
 | Field                                   | Type     | Required | Description                                               |
 | --------------------------------------- | -------- | -------- | --------------------------------------------------------- |
-| `trigger`                               | `string` | Yes      | `scheduled` / `threshold` / `on_demand`                   |
-| `scope`                                 | `string` | Yes      | `full` (all phases) / `quick` (assessment + urgent tasks) |
-| `timestamp`                             | `string` | Yes      | ISO 8601 timestamp                                        |
+| `trigger`                               | `string` | No       | `scheduled` / `threshold` / `on_demand` (default: `on_demand`) |
+| `scope`                                 | `string` | No       | `full` (all phases) / `quick` (assessment + urgent tasks) / `daydream` (idle-time salience scoring & micro-consolidation, default) |
+| `timestamp`                             | `string` | No       | ISO 8601 timestamp                                        |
 | `parameters.stale_event_threshold_days` | `u32`    | No       | Days before events are considered stale (default: 7)      |
 | `parameters.confidence_decay_factor`    | `f64`    | No       | Decay multiplier per cycle (default: 0.95)                |
 | `parameters.unsorted_max_backlog`       | `u32`    | No       | Max unsorted items to process (default: 20)               |
@@ -336,8 +338,8 @@ Business agents can register the Recall endpoint as an LLM tool/function call. S
 - Spaces are **lazy-loaded** on first access via `OnceCell`.
 - In-memory cache with access tracking.
 - **5-minute interval**: Flush active spaces to storage.
-- **20-minute idle timeout**: Evict unused spaces from cache.
-- Graceful shutdown: Flush all spaces before exit.
+- **9-minute idle timeout**: Evict unused spaces from cache (skipped while a space is pinned, processing, or still referenced by requests).
+- Graceful shutdown: Close all space databases before exit.
 
 ### Memory Types in the Cognitive Nexus
 
@@ -353,18 +355,20 @@ The schema is self-describing — all type definitions are stored as nodes withi
 
 ### CLI Arguments / Environment Variables
 
-| Env Variable      | CLI Flag            | Default                                                   | Description                                                                          |
-| ----------------- | ------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `LISTEN_ADDR`     | `--addr`            | `127.0.0.1:8042`                                          | Listen address                                                                       |
-| `ED25519_PUBKEYS` | `--ed25519-pubkeys` | —                                                         | Comma-separated Base64 Ed25519 public keys; if empty, API authentication is disabled |
-| `MODEL_FAMILY`    | `--model-family`    | `gemini`                                                  | Model family to use for encoding and recall (e.g., `gemini`, `anthropic`, `openai`)  |
-| `MODEL_API_KEY`   | `--model-api-key`   | —                                                         | Google Gemini API key                                                                |
-| `MODEL_API_BASE`  | `--model-api-base`  | `https://generativelanguage.googleapis.com/v1beta/models` | Gemini API base URL                                                                  |
-| `MODEL_NAME`      | `--model-name`      | `gemini-3-flash-preview`                                  | LLM model for agents                                                                 |
-| `HTTPS_PROXY`     | `--https-proxy`     | —                                                         | HTTPS proxy URL                                                                      |
-| `SHARDING_IDX`    | `--sharding-idx`    | `0`                                                       | Shard index for this instance                                                        |
-| `MANAGERS`        | `--managers`        | —                                                         | Comma-separated manager principal IDs                                                |
-| `CORS_ORIGINS`    | `--cors-origins`    | —                                                         | CORS allowed origins: empty = disabled, `*` = allow all, or comma-separated origins  |
+| Env Variable           | CLI Flag                 | Default                             | Description                                                                          |
+| ---------------------- | ------------------------ | ----------------------------------- | ------------------------------------------------------------------------------------ |
+| `LISTEN_ADDR`          | `--addr`                 | `127.0.0.1:8042`                    | Listen address                                                                       |
+| `ED25519_PUBKEYS`      | `--ed25519-pubkeys`      | —                                   | Comma-separated Base64 Ed25519 public keys; if empty, API authentication is disabled |
+| `MODEL_FAMILY`         | `--model-family`         | `anthropic`                         | Model family to use for encoding and recall (e.g., `gemini`, `anthropic`, `openai`)  |
+| `MODEL_API_KEY`        | `--model-api-key`        | —                                   | API key for the configured model provider                                            |
+| `MODEL_API_BASE`       | `--model-api-base`       | `https://api.deepseek.com/anthropic` | Model API base URL                                                                  |
+| `MODEL_NAME`           | `--model-name`           | `deepseek-v4-pro`                   | LLM model for agents                                                                 |
+| `MODEL_CONTEXT_WINDOW` | `--model-context-window` | `400000`                            | Model context window size (tokens)                                                   |
+| `MODEL_MAX_OUTPUT`     | `--model-max-output`     | `384000`                            | Model max output size (tokens)                                                       |
+| `HTTPS_PROXY`          | `--https-proxy`          | —                                   | HTTPS proxy URL                                                                      |
+| `SHARDING_IDX`         | `--sharding-idx`         | `0`                                 | Shard index for this instance                                                        |
+| `MANAGERS`             | `--managers`             | —                                   | Comma-separated manager principal IDs                                                |
+| `CORS_ORIGINS`         | `--cors-origins`         | —                                   | CORS allowed origins: empty = disabled, `*` = allow all, or comma-separated origins  |
 
 `CORS_ORIGINS` examples:
 - `""` (empty): CORS disabled
@@ -401,7 +405,7 @@ docker pull ghcr.io/ldclabs/anda_brain_amd64:latest
 # Run with ENV (in-memory by default)
 docker run --rm -p 8042:8042 \
   -e LISTEN_ADDR=0.0.0.0:8042 \
-  -e GEMINI_API_KEY=your_key \
+  -e MODEL_API_KEY=your_key \
   ghcr.io/ldclabs/anda_brain_amd64:latest
 
 # Override startup args (example: local storage)
@@ -433,4 +437,4 @@ Key crates from the Anda ecosystem:
 
 Copyright © LDC Labs
 
-Licensed under the MIT or Apache-2.0 license.
+Licensed under the Apache License, Version 2.0.

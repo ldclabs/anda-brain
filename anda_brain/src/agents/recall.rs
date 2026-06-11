@@ -174,7 +174,6 @@ pub struct RecallAgent {
     memory: Arc<MemoryManagement>,
     hook: Arc<dyn BrainHook>,
     history: Arc<RwLock<VecDeque<Document>>>,
-    #[allow(dead_code)]
     max_input_tokens: usize,
 }
 
@@ -201,10 +200,13 @@ impl RecallAgent {
             .list_conversations_by_user(&SELF_USER_ID, None, Some(3))
             .await?;
         // Only completed conversations belong in the model context, matching
-        // the runtime push_completed_history behavior.
+        // the runtime push_completed_history behavior. The list is newest
+        // first while the runtime queue runs oldest -> newest, so reverse it;
+        // otherwise the next push_back would evict the newest entry first.
         *self.history.write() = conversations
             .into_iter()
             .filter(|c| c.status == ConversationStatus::Completed)
+            .rev()
             .map(Document::from)
             .collect();
         Ok(())
@@ -372,9 +374,12 @@ impl Agent<AgentCtx> for RecallAgent {
             .await
         {
             Ok(mut output) => {
-                // Mark conversation as completed successfully
-                conversation.messages.clear();
-                conversation.append_messages(output.chat_history.clone());
+                if !output.chat_history.is_empty() {
+                    // An anomalous result (e.g. cancelled before any output)
+                    // must not erase the original input from the record.
+                    conversation.messages.clear();
+                    conversation.append_messages(output.chat_history.clone());
+                }
                 conversation.status = if output.failed_reason.is_some() {
                     ConversationStatus::Failed
                 } else {
@@ -491,6 +496,24 @@ mod tests {
 
         fn completion(&self, _req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
             Box::pin(async move { Err("model error".into()) })
+        }
+    }
+
+    #[derive(Debug)]
+    struct EmptyHistoryCompleter;
+
+    impl CompletionFeaturesDyn for EmptyHistoryCompleter {
+        fn model_name(&self) -> String {
+            "recall-empty-history-test-model".to_string()
+        }
+
+        fn completion(&self, _req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            Box::pin(async move {
+                Ok(AgentOutput {
+                    content: "no output".to_string(),
+                    ..Default::default()
+                })
+            })
         }
     }
 
@@ -682,6 +705,30 @@ mod tests {
                 .unwrap()
                 .contains("model error")
         );
+    }
+
+    #[tokio::test]
+    async fn recall_run_preserves_input_when_chat_history_is_empty() {
+        let app = test_app_state_with_completer("recall_empty_history", EmptyHistoryCompleter);
+        let space = create_loaded_space(&app, "recall_empty_history").await;
+        let ctx = space.ctx_for_test(SELF_USER_ID, RecallAgent::NAME).unwrap();
+
+        let output = Agent::<AgentCtx>::run(
+            space.recall.as_ref(),
+            ctx,
+            recall_prompt("anything stored?", None),
+            vec![],
+        )
+        .await
+        .unwrap();
+
+        let stored = space
+            .get_conversation(Some("recall".to_string()), output.conversation.unwrap())
+            .await
+            .unwrap();
+        assert_eq!(stored.status, ConversationStatus::Completed);
+        // The anomalous empty model output must not erase the original input.
+        assert_eq!(stored.messages.len(), 1);
     }
 
     #[tokio::test]

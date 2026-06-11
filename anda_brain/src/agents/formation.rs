@@ -43,7 +43,6 @@ pub struct FormationAgent {
     processing_conversation: Arc<AtomicU64>,
     hook: Arc<dyn BrainHook>,
     history: Arc<RwLock<VecDeque<Document>>>,
-    #[allow(dead_code)]
     max_input_tokens: usize,
 }
 
@@ -187,9 +186,12 @@ impl FormationAgent {
                 break;
             }
 
+            // The marker is a high-water mark: reprocessing an older
+            // conversation (e.g. via restart_formation) must not rewind it.
+            let processed = self.get_processed().unwrap_or_default().max(conv_id);
             self.memory
                 .conversations
-                .save_extension("brain_processed".to_string(), conv_id.into())
+                .save_extension("brain_processed".to_string(), processed.into())
                 .await
                 .ok();
 
@@ -1296,6 +1298,48 @@ mod tests {
         let stored = space.memory.get_conversation(pending._id).await.unwrap();
         assert_eq!(stored.status, ConversationStatus::Completed);
         assert_eq!(stored.failed_reason, None);
+    }
+
+    #[tokio::test]
+    async fn process_loop_keeps_processed_marker_as_high_water_mark() {
+        let app = test_app_state_with_completer("formation_marker_high_water", SuccessCompleter);
+        let space = create_loaded_space(&app, "formation_marker_high_water").await;
+        let ctx = space
+            .ctx_for_test(SELF_USER_ID, FormationAgent::NAME)
+            .unwrap();
+        let pending = stored_conversation(
+            &space,
+            vec![json!(Message {
+                role: "user".to_string(),
+                content: vec![formation_prompt(None).into()],
+                ..Default::default()
+            })],
+        )
+        .await;
+        space
+            .memory
+            .conversations
+            .save_extension("brain_processed".to_string(), 9_u64.into())
+            .await
+            .unwrap();
+
+        space
+            .formation
+            .processing_conversation
+            .store(pending._id, Ordering::SeqCst);
+        space.formation.process_loop(ctx, pending.clone()).await;
+
+        // Reprocessing an older conversation must not rewind the marker.
+        assert_eq!(space.formation.get_processed(), Some(9));
+        assert_eq!(
+            space
+                .memory
+                .get_conversation(pending._id)
+                .await
+                .unwrap()
+                .status,
+            ConversationStatus::Completed
+        );
     }
 
     #[tokio::test]
