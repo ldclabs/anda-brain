@@ -2,6 +2,13 @@
 
 All notable changes to the Anda Brain project.
 
+## [0.7.1] — 2026-06-12
+
+### Changed
+- **Release version advanced to `0.7.1`.** `anda_brain` now reports `0.7.1`, and the lockfile was refreshed for the release.
+- **Dependencies updated for the latest engine runtime fixes.** `anda_engine` 0.12.36 → 0.12.37, with transitive patch updates for `block-buffer`, `memchr`, and `smallvec`.
+- **KIP prompt syntax summaries now match the expanded 0.8 grammar.** Brain Formation, Maintenance, Recall, and shared KIP syntax guidance show comma-separated multi-key `ORDER BY` and proposition-level `EXPECT VERSION` guards in their compact syntax blocks.
+
 ## [0.7.0] — 2026-06-11
 
 ### Added
