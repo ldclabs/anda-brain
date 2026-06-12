@@ -626,6 +626,8 @@ type MaintenanceAt struct {
 	Daydream int64 `json:"daydream"`
 	Full     int64 `json:"full"`
 	Quick    int64 `json:"quick"`
+	// Start time of the latest maintenance task in unix milliseconds, 0 if none started.
+	StartAt int64 `json:"start_at"`
 }
 
 type Usage struct {

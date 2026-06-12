@@ -184,6 +184,8 @@ export interface MaintenanceAt {
   daydream: number;
   full: number;
   quick: number;
+  /** Start time of the latest maintenance task in unix milliseconds, 0 if none started. */
+  start_at: number;
 }
 
 export interface Usage {

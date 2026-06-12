@@ -506,6 +506,9 @@ pub struct MaintenanceAt {
     pub daydream: u64,
     pub full: u64,
     pub quick: u64,
+    /// Start time of the latest maintenance task in unix milliseconds, 0 if none started.
+    #[serde(default)]
+    pub start_at: u64,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]

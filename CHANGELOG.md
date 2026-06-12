@@ -2,6 +2,14 @@
 
 All notable changes to the Anda Brain project.
 
+## [0.7.2] — 2026-06-12
+
+### Added
+- **Maintenance status now exposes the latest task start time.** `MaintenanceAt` includes `start_at`, persisted when a maintenance cycle begins and surfaced through the Rust API, generated TypeScript API docs, Chinese API docs, and Go CLI client types.
+
+### Changed
+- **Release version advanced to `0.7.2`.** `anda_brain` and `anda-cli` now report `0.7.2`, and the lockfile was refreshed for the release.
+
 ## [0.7.1] — 2026-06-12
 
 ### Changed

@@ -105,8 +105,22 @@ impl MaintenanceAgent {
             {
                 rt.daydream = id;
             }
+            if let Some(v) = kv.get("start_at")
+                && let Ok(ms) = v.try_into()
+            {
+                rt.start_at = ms;
+            }
         });
         rt
+    }
+
+    /// Persists the start time of the latest maintenance task.
+    pub async fn set_start_at(&self, now_ms: u64) -> Result<(), BoxError> {
+        self.conversations
+            .conversations
+            .save_extension_from("start_at".to_string(), &now_ms)
+            .await?;
+        Ok(())
     }
 
     pub async fn set_processed_at(
@@ -164,6 +178,13 @@ impl Agent<AgentCtx> for MaintenanceAgent {
 
         let caller = ctx.caller();
         let now_ms = unix_ms();
+        // Persistence failure must not block the maintenance cycle itself.
+        if let Err(err) = self.set_start_at(now_ms).await {
+            log::warn!(
+                target: "brain",
+                "failed to persist maintenance start_at: {err:?}"
+            );
+        }
 
         let mut conversation = Conversation {
             user: *caller,
@@ -579,6 +600,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(maintenance.get_processed_at().quick, 7);
+
+        assert_eq!(maintenance.get_processed_at().start_at, 0);
+        maintenance.set_start_at(12345).await.unwrap();
+        assert_eq!(maintenance.get_processed_at().start_at, 12345);
     }
 
     #[tokio::test]

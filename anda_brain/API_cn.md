@@ -184,6 +184,8 @@ export interface MaintenanceAt {
   daydream: number;
   full: number;
   quick: number;
+  /** 最近一次 maintenance 任务的启动时间（unix 毫秒），0 表示尚未启动过。 */
+  start_at: number;
 }
 
 export interface Usage {
