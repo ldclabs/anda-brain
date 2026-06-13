@@ -1,4 +1,5 @@
 use anda_engine::unix_ms;
+use rand::Rng;
 use axum::{
     Json,
     body::Bytes,
@@ -6,7 +7,6 @@ use axum::{
     response::{Html, IntoResponse, Response},
 };
 use ic_auth_types::ByteArrayB64;
-use ic_cose::rand_bytes;
 use markdown::{CompileOptions, Options, ParseOptions, to_html, to_html_with_options};
 use serde_json::json;
 use std::sync::LazyLock;
@@ -524,7 +524,8 @@ pub async fn add_space_token(
         .await
         .map_err(AppError::bad_request)?;
 
-    let data: [u8; 20] = rand_bytes();
+    let mut data: [u8; 20] = [0; 20];
+    rand::rng().fill_bytes(&mut data);
     let token = format!("ST{}", ByteArrayB64(data));
     let rt = space
         .add_space_token(token.clone(), input, now_ms)

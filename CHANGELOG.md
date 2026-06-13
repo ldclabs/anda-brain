@@ -2,6 +2,14 @@
 
 All notable changes to the Anda Brain project.
 
+## [0.8.0] — 2026-06-13
+
+### Changed
+- **Release version advanced to `0.8.0`.** `anda_brain` and `anda-cli` now report `0.8.0`, and the lockfile was refreshed for the release.
+- **Anda ecosystem dependencies moved to the 0.13/0.8 line.** Brain now depends on `anda_core`, `anda_engine`, `anda_engine_server`, and `anda_web3_client` 0.13, plus the latest `anda_object_store` and `anda_db_tfs` 0.8 releases.
+- **CBOR handling now uses `cbor2`.** Request parsing, CBOR responses, and payload tests now use canonical CBOR encoding/decoding through `cbor2` instead of `ciborium`.
+- **Space token generation no longer depends on `ic_cose`.** Token entropy now comes from `rand`, allowing the direct `ic_cose` dependency to be removed while retaining 20-byte random token material.
+
 ## [0.7.2] — 2026-06-12
 
 ### Added

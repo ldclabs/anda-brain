@@ -150,7 +150,7 @@ impl ContentType {
             ContentType::Json => serde_json::from_slice(body)
                 .map(StringOr::Value)
                 .map_err(|e| RpcError::new(format!("parse JSON error: {e}"))),
-            ContentType::Cbor => ciborium::de::from_reader(body)
+            ContentType::Cbor => cbor2::from_slice(body)
                 .map(StringOr::Value)
                 .map_err(|e| RpcError::new(format!("parse CBOR error: {e}"))),
             ContentType::Markdown(_) => {
@@ -370,7 +370,7 @@ impl<T: Serialize> IntoResponse for AppResponse<T> {
             },
             ContentType::Cbor => {
                 let mut buf = Vec::new();
-                match ciborium::ser::into_writer(&self.data, &mut buf) {
+                match cbor2::to_writer(&self.data, &mut buf) {
                     Ok(()) => (
                         [(header::CONTENT_TYPE, self.content_type.header_value())],
                         buf,
@@ -494,7 +494,7 @@ mod tests {
         assert_eq!(parsed_json.value().unwrap(), expected);
 
         let mut cbor_body = Vec::new();
-        ciborium::ser::into_writer(&demo_payload(), &mut cbor_body).unwrap();
+        cbor2::to_writer(&demo_payload(), &mut cbor_body).unwrap();
         let parsed_cbor = ContentType::Cbor
             .parse_body::<DemoPayload>(&cbor_body)
             .unwrap();
@@ -564,7 +564,7 @@ mod tests {
             "application/cbor"
         );
         let cbor_bytes = to_bytes(cbor_res.into_body(), usize::MAX).await.unwrap();
-        let cbor_parsed: DemoPayload = ciborium::de::from_reader(cbor_bytes.as_ref()).unwrap();
+        let cbor_parsed: DemoPayload = cbor2::from_slice(cbor_bytes.as_ref()).unwrap();
         assert_eq!(cbor_parsed, payload);
     }
 
