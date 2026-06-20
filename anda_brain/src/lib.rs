@@ -1,6 +1,6 @@
 use anda_core::BoxError;
 use ic_auth_types::ByteBufB64;
-use ic_cose_types::cose::{CborSerializable, CoseKey, ed25519::VerifyingKey, get_cose_key_public};
+use ic_cose_types::cose::{CoseKey, ed25519::VerifyingKey, get_cose_key_public};
 use std::str::FromStr;
 
 pub mod agents;
@@ -41,13 +41,8 @@ fn parse_ed25519_pubkey(input: &str) -> Option<VerifyingKey> {
 #[cfg(test)]
 mod tests {
     use super::parse_ed25519_pubkeys;
-    use coset::{
-        CoseKeyBuilder, Label,
-        cbor::value::Value,
-        iana::{self},
-    };
+    use cose2::{Key as CoseKey, iana};
     use ic_auth_types::ByteBufB64;
-    use ic_cose_types::cose::CborSerializable;
 
     fn ed25519_basepoint_bytes() -> [u8; 32] {
         let mut bytes = [0x66; 32];
@@ -76,11 +71,9 @@ mod tests {
     #[test]
     fn parse_ed25519_pubkeys_accepts_cose_key_entries() {
         let key_bytes = ed25519_basepoint_bytes();
-        let mut cose_key = CoseKeyBuilder::new_okp_key().build();
-        cose_key.params.push((
-            Label::Int(iana::OkpKeyParameter::X as i64),
-            Value::Bytes(key_bytes.to_vec()),
-        ));
+        let mut cose_key = CoseKey::new();
+        cose_key.set_kty(iana::KeyTypeOKP);
+        cose_key.insert(iana::OKPKeyParameterX, key_bytes.to_vec());
         let encoded = ByteBufB64(cose_key.to_vec().unwrap()).to_string();
 
         let keys = parse_ed25519_pubkeys(&encoded).unwrap();

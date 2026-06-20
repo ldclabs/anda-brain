@@ -570,10 +570,16 @@ mod tests {
     };
     use anda_core::Principal;
     use anda_engine::model::ModelConfig as EngineModelConfig;
-    use coset::{cbor::value::Value, cwt::ClaimsSetBuilder};
-    use ic_cose_types::cose::iana;
+    use cose2::{CoseMap, Label, Value, cwt::Claims, iana};
     use serde_json::json;
     use std::str::FromStr;
+
+    fn scope_claim(scope: &str) -> CoseMap {
+        CoseMap::from_iter([(
+            Label::Int(iana::CWTClaimScope),
+            Value::Text(scope.to_string()),
+        )])
+    }
 
     #[test]
     fn space_token_scope_serde_roundtrip() {
@@ -614,11 +620,12 @@ mod tests {
     #[test]
     fn cw_token_extracts_user_audience_and_scope_from_claims() {
         let user = Principal::from_slice(&[42]);
-        let claims = ClaimsSetBuilder::new()
-            .subject(user.to_string())
-            .audience("memory-space".to_string())
-            .claim(iana::CwtClaimName::Scope, Value::Text("write".to_string()))
-            .build();
+        let claims = Claims {
+            subject: Some(user.to_string()),
+            audience: Some("memory-space".to_string()),
+            extra: scope_claim("write"),
+            ..Default::default()
+        };
 
         let token = CWToken::from_claims(claims).unwrap();
         assert_eq!(token.user, user);
@@ -628,21 +635,24 @@ mod tests {
 
     #[test]
     fn cw_token_rejects_missing_or_invalid_claims() {
-        let missing_subject = ClaimsSetBuilder::new()
-            .claim(iana::CwtClaimName::Scope, Value::Text("read".to_string()))
-            .build();
+        let missing_subject = Claims {
+            extra: scope_claim("read"),
+            ..Default::default()
+        };
         assert!(CWToken::from_claims(missing_subject).is_err());
 
-        let invalid_scope = ClaimsSetBuilder::new()
-            .subject(Principal::from_slice(&[1]).to_string())
-            .claim(iana::CwtClaimName::Scope, Value::Text("admin".to_string()))
-            .build();
+        let invalid_scope = Claims {
+            subject: Some(Principal::from_slice(&[1]).to_string()),
+            extra: scope_claim("admin"),
+            ..Default::default()
+        };
         assert!(CWToken::from_claims(invalid_scope).is_err());
 
-        let invalid_subject = ClaimsSetBuilder::new()
-            .subject("not a principal".to_string())
-            .claim(iana::CwtClaimName::Scope, Value::Text("*".to_string()))
-            .build();
+        let invalid_subject = Claims {
+            subject: Some("not a principal".to_string()),
+            extra: scope_claim("*"),
+            ..Default::default()
+        };
         assert!(CWToken::from_claims(invalid_subject).is_err());
     }
 

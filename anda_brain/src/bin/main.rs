@@ -473,13 +473,8 @@ mod tests {
         object_store_from_command, parse_ed25519_pubkeys, parse_managers, run_service,
     };
     use anda_brain::agents::SELF_USER_ID;
-    use coset::{
-        CoseKeyBuilder, Label,
-        cbor::value::Value,
-        iana::{self},
-    };
+    use cose2::{Key as CoseKey, iana};
     use ic_auth_types::ByteBufB64;
-    use ic_cose_types::cose::CborSerializable;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::time::{Duration, sleep, timeout};
     use tokio_util::sync::CancellationToken;
@@ -623,11 +618,9 @@ mod tests {
     #[test]
     fn parse_ed25519_pubkeys_accepts_cose_key_entries() {
         let key_bytes = ed25519_basepoint_bytes();
-        let mut cose_key = CoseKeyBuilder::new_okp_key().build();
-        cose_key.params.push((
-            Label::Int(iana::OkpKeyParameter::X as i64),
-            Value::Bytes(key_bytes.to_vec()),
-        ));
+        let mut cose_key = CoseKey::new();
+        cose_key.set_kty(iana::KeyTypeOKP);
+        cose_key.insert(iana::OKPKeyParameterX, key_bytes.to_vec());
         let encoded = ByteBufB64(cose_key.to_vec().unwrap()).to_string();
 
         let keys = parse_ed25519_pubkeys(&encoded).unwrap();

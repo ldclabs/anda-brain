@@ -2,6 +2,14 @@
 
 All notable changes to the Anda Brain project.
 
+## [0.8.1] — 2026-06-20
+
+### Changed
+- **Release version advanced to `0.8.1`.** `anda_brain` now reports `0.8.1`, and the lockfile was refreshed for the release.
+- **COSE/CWT test fixtures now use `cose2`.** The remaining direct `coset` dev dependency has been replaced with `cose2`, keeping token and COSE key fixtures aligned with the current COSE stack.
+- **`make fix` now formats before applying clippy fixes.** The fix target runs `cargo fmt --all` before `cargo clippy --fix --workspace --tests`.
+- **Anda ecosystem dependencies were refreshed to current patch releases.** The lockfile now resolves the latest compatible 0.13/0.8 runtime, database, KIP, and object-store crates.
+
 ## [0.8.0] — 2026-06-13
 
 ### Changed

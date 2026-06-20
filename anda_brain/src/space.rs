@@ -1198,14 +1198,9 @@ mod tests {
         model::{CompletionFeaturesDyn, Model, Models, reqwest},
         unix_ms,
     };
-    use coset::{cbor::value::Value, cwt::ClaimsSetBuilder};
+    use cose2::{CoseMap, Label, Sign1Message, Value, cwt::Claims, iana};
     use ic_auth_types::ByteBufB64;
-    use ic_cose_types::cose::{
-        CborSerializable,
-        ed25519::{SigningKey, VerifyingKey, ed25519_sign},
-        iana,
-        sign1::cose_sign1,
-    };
+    use ic_cose_types::cose::ed25519::{SigningKey, VerifyingKey, ed25519_sign};
     use object_store::memory::InMemory;
     use std::collections::BTreeSet;
     use std::sync::Arc;
@@ -1310,14 +1305,23 @@ mod tests {
         audience: &str,
         scope: &str,
     ) -> String {
-        let claims = ClaimsSetBuilder::new()
-            .subject(user.to_string())
-            .audience(audience.to_string())
-            .claim(iana::CwtClaimName::Scope, Value::Text(scope.to_string()))
-            .build();
+        let claims = Claims {
+            subject: Some(user.to_string()),
+            audience: Some(audience.to_string()),
+            extra: CoseMap::from_iter([(
+                Label::Int(iana::CWTClaimScope),
+                Value::Text(scope.to_string()),
+            )]),
+            ..Default::default()
+        };
         let payload = claims.to_vec().unwrap();
-        let mut sign1 = cose_sign1(payload, iana::Algorithm::EdDSA, None).unwrap();
-        sign1.signature = ed25519_sign(signing_key.as_bytes(), &sign1.tbs_data(&[])).to_vec();
+        let mut sign1 = Sign1Message::new(Some(payload));
+        let tbs_data = sign1
+            .prepare_signature(Some(Label::Int(iana::AlgorithmEdDSA)), None, None)
+            .unwrap();
+        sign1
+            .set_signature(ed25519_sign(signing_key.as_bytes(), &tbs_data).to_vec())
+            .unwrap();
         ByteBufB64(sign1.to_vec().unwrap()).to_string()
     }
 
