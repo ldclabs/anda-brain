@@ -2,6 +2,18 @@
 
 All notable changes to the Anda Brain project.
 
+## [0.9.0] — 2026-06-27
+
+### Added
+- **Built-in MCP server support.** `anda_brain` now exposes memory operations through MCP over both stdio (`anda_brain mcp --space-id <spaceId> ...`) and Streamable HTTP (`/mcp/<spaceId>`), enabling MCP-capable agents to connect directly to Brain spaces.
+- **MCP memory tools.** The MCP server provides tools for remembering conversations, recalling memory, running maintenance, and executing readonly KIP queries.
+- **Remote MCP configuration controls.** HTTP service mode now includes MCP path prefix, host/origin allowlists, optional space auto-creation, stateful sessions, and keep-alive configuration.
+
+### Changed
+- **Release version advanced to `0.9.0`.** `anda_brain` and `anda-cli` now report `0.9.0`, and the lockfile was refreshed for the release.
+- **Documentation and agent skill guidance now cover MCP integration.** English and Chinese READMEs, API docs, and SKILL files describe stdio and Streamable HTTP MCP setup plus the exposed memory tools.
+- **Dependencies updated for MCP support.** The workspace now depends on `rmcp` and `schemars`, and `object_store` was refreshed to the `0.14` line.
+
 ## [0.8.1] — 2026-06-20
 
 ### Changed

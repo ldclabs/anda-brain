@@ -9,6 +9,7 @@
   - Request: `Content-Type: application/json | application/cbor | text/markdown`
   - Response: `Accept: application/json | application/cbor | text/markdown`
 - Most business endpoints return an RPC envelope: `RpcResponse<T>`
+- MCP clients can use the built-in Streamable HTTP endpoint: `/mcp/<space_id>`, or the local stdio server: `anda_brain mcp --space-id <space_id> [local|aws]`
 
 ---
 
@@ -107,6 +108,21 @@ export interface CreateOrUpdateSpaceInput {
 export interface GetOrInitUserInput {
   user: string;
   name?: string;
+}
+
+export interface McpServerConfig {
+  space_id: string;
+  auth_token?: string;
+  auto_create_space?: boolean;
+  auto_create_tier?: number;
+}
+
+export interface McpHttpServerConfig {
+  path_prefix?: string; // default "/mcp"; clients connect to {path_prefix}/{space_id}
+  allowed_hosts?: string[]; // default loopback-only in rmcp; set company domains explicitly
+  allowed_origins?: string[]; // for browser-based MCP clients
+  auto_create_space?: boolean;
+  auto_create_tier?: number;
 }
 
 export interface Concept {
@@ -272,9 +288,44 @@ export interface KipResponse<T> {
 
 ---
 
-## 3) Endpoint List
+## 3) MCP Server
 
-## 3.1 Public Endpoints
+When the HTTP service starts, Anda Brain exposes a Streamable HTTP MCP endpoint for MCP-capable agents:
+
+```text
+https://your-brain-host/mcp/my_space_001
+```
+
+Clients select the target memory space from the URL path and pass the same CWT or space token used by REST as `Authorization: Bearer <token>`. This is the recommended mode for internal multi-user agent platforms where each employee receives a dedicated Brain space.
+
+Anda Brain can also run as a local MCP stdio server:
+
+```bash
+MCP_AUTH_TOKEN="$SPACE_TOKEN" \
+  anda_brain mcp --space-id my_space_001 local --db ./data
+```
+
+Both MCP modes use the same model, auth, and storage configuration as the HTTP service. For stdio, the nested storage subcommand is optional; omit it for in-memory development, use `local --db ./data` for local persistence, or use `aws --bucket ... --region ...` for S3.
+
+| Tool | Input | Output | Scope |
+| ---- | ----- | ------ | ----- |
+| `anda_brain_remember_conversation` | `FormationInput` shape (`messages`, `context`, `timestamp`) | `AgentOutput` | `write` |
+| `anda_brain_recall_memory` | `RecallInput` shape (`query`, `context`) | `AgentOutput` | `read` |
+| `anda_brain_run_maintenance` | `MaintenanceInput` shape | `AgentOutput` | `write` |
+| `anda_brain_get_space_info` | none | `SpaceInfo` | `read` |
+| `anda_brain_get_formation_status` | none | `FormationStatus` | `read` |
+| `anda_brain_execute_kip_readonly` | `{ command?, commands?, parameters?, dry_run? }` | `KipResponse` | `read` |
+| `anda_brain_get_or_init_user` | `{ user, name? }` | `Concept` | `write` |
+| `anda_brain_list_conversations` | `{ collection?, cursor?, limit? }` | `{ conversations, next_cursor }` | `read` |
+| `anda_brain_get_conversation` | `{ conversation_id, collection?, delta?, messages_offset?, artifacts_offset? }` | `Conversation` or `ConversationDelta` | `read` |
+
+When `ED25519_PUBKEYS` is set, configure the remote MCP client with an `Authorization` bearer token, or configure stdio with `MCP_AUTH_TOKEN` / `--mcp-auth-token`. `read` tools can also access public spaces without a token. For remote MCP behind a company domain or reverse proxy, set `MCP_HTTP_ALLOWED_HOSTS` to the accepted Host values. Use `--mcp-auto-create-space` for local stdio development or `MCP_HTTP_AUTO_CREATE_SPACE=true` for remote development if the target space does not exist yet; remote auto-create requires `ED25519_PUBKEYS` plus a CWT with `write` scope for the target space before the missing space is created.
+
+---
+
+## 4) Endpoint List
+
+## 4.1 Public Endpoints
 
 ### GET `/`
 
@@ -296,7 +347,7 @@ export interface KipResponse<T> {
 
 ---
 
-## 3.2 Space Business Endpoints (`/v1/{space_id}`)
+## 4.2 Space Business Endpoints (`/v1/{space_id}`)
 
 ### POST `/v1/{space_id}/formation`
 
@@ -325,7 +376,7 @@ export interface KipResponse<T> {
 - Purpose: Execute a KIP request (read-only mode, suitable for queries)
 - Auth: SpaceToken/CWT `read` (public spaces are unauthenticated; private spaces require a valid token)
 - Request body: `KipRequest`
-- Response: `KipResponse<T>` (returns different result types based on the commands
+- Response: `KipResponse<T>` (returns different result types based on the commands)
 
 ### POST `/v1/{space_id}/get_or_init_user`
 
@@ -376,12 +427,12 @@ export interface KipResponse<T> {
 
 ---
 
-## 3.3 Space Management Endpoints (`/v1/{space_id}/management`)
+## 4.3 Space Management Endpoints (`/v1/{space_id}/management`)
 
 ### GET `/v1/{space_id}/management/space_tokens`
 
 - Purpose: List Space Tokens
-- Auth: Must pass CWT `read` (user management-level auth)
+- Auth: Must pass CWT `write` (user management-level auth; raw token values are secret material)
 - Response: `RpcResponse<SpaceToken[]>`
 
 ### POST `/v1/{space_id}/management/add_space_token`
@@ -413,7 +464,7 @@ export interface KipResponse<T> {
 
 ### GET `/v1/{space_id}/management/space_byok`
 - Purpose: Get BYOK (Bring Your Own Key) configuration, i.e., use custom model configuration
-- Auth: Must pass CWT `read` (user management-level auth)
+- Auth: Must pass CWT `write` (user management-level auth; response includes provider credentials)
 - Response: `RpcResponse<ModelConfig>`
 
 ### PATCH `/v1/{space_id}/management/space_byok`
@@ -424,7 +475,7 @@ export interface KipResponse<T> {
 
 ---
 
-## 3.4 Admin Endpoints (`/admin`)
+## 4.4 Admin Endpoints (`/admin`)
 
 ### POST `/admin/create_space`
 
@@ -442,7 +493,7 @@ export interface KipResponse<T> {
 
 ---
 
-## 4) Frontend Call Example (TS)
+## 5) Frontend Call Example (TS)
 
 ```ts
 async function rpcPost<TReq, TRes>(
@@ -479,7 +530,7 @@ if (recall.error) {
 
 ---
 
-## 5) Error Semantics
+## 6) Error Semantics
 
 - Authentication failure: HTTP `401`, response body is `RpcError`
 - Invalid request/parameters: HTTP `400`, response body is `RpcError`

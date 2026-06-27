@@ -34,6 +34,7 @@ Anda Brain is designed to be **self-hosted** (the hosted cloud service has been 
 - **Three operational modes** — Formation (encoding), Recall (retrieval), and Maintenance (consolidation & pruning).
 - **Multi-space isolation** — Each space has its own independent database, knowledge graph, and conversation history.
 - **Triple serialization** — Supports JSON, CBOR, and Markdown for request/response payloads (negotiated via `Content-Type` / `Accept` headers).
+- **Built-in MCP server** — MCP-capable agents can use Anda Brain through Streamable HTTP or stdio tools without writing REST glue code.
 - **Pluggable storage backends** — Local filesystem, AWS S3, or in-memory (for development/testing).
 
 ## Agents
@@ -119,15 +120,48 @@ Detailed API docs (with TypeScript request/response types):
 | `GET`   | `/v1/{space_id}/conversations/{conversation_id}`       | Get one conversation detail                                                   | `read` (CWT or space token)  |
 | `GET`   | `/v1/{space_id}/conversations/{conversation_id}/delta` | Get incremental conversation updates                                          | `read` (CWT or space token)  |
 | `GET`   | `/v1/{space_id}/conversations`                         | List conversations (cursor pagination)                                        | `read` (CWT or space token)  |
-| `GET`   | `/v1/{space_id}/management/space_tokens`               | List space tokens                                                             | `read` (CWT)                 |
+| `GET`   | `/v1/{space_id}/management/space_tokens`               | List space tokens                                                             | `write` (CWT)                |
 | `POST`  | `/v1/{space_id}/management/add_space_token`            | Add a space token                                                             | `write` (CWT)                |
 | `POST`  | `/v1/{space_id}/management/revoke_space_token`         | Revoke a space token                                                          | `write` (CWT)                |
 | `PATCH` | `/v1/{space_id}/management/update_space`               | Update space information (name, description, public/private)                  | `write` (CWT)                |
 | `PATCH` | `/v1/{space_id}/management/restart_formation`          | Restart a formation task                                                      | `write` (CWT)                |
-| `GET`   | `/v1/{space_id}/management/space_byok`                 | Get BYOK (Bring Your Own Key) configuration                                   | `read` (CWT)                 |
+| `GET`   | `/v1/{space_id}/management/space_byok`                 | Get BYOK (Bring Your Own Key) configuration                                   | `write` (CWT)                |
 | `PATCH` | `/v1/{space_id}/management/space_byok`                 | Update BYOK (Bring Your Own Key) configuration                                | `write` (CWT)                |
 | `POST`  | `/admin/{space_id}/update_space_tier`                  | Update a space tier (manager only)                                            | `write` (CWT)                |
 | `POST`  | `/admin/create_space`                                  | Create a new space (manager only)                                             | `write` (CWT)                |
+
+### MCP Server
+
+When the HTTP service starts, Anda Brain also exposes a Streamable HTTP MCP endpoint:
+
+```text
+https://your-brain-host/mcp/{space_id}
+```
+
+Use this for multi-user deployments where each employee or agent team receives a dedicated Brain space. MCP clients should send the same CWT or space token used by REST as `Authorization: Bearer <token>`. Read-only tools can access public spaces without a token.
+
+For local desktop or development clients, Anda Brain can also run as a stdio MCP server:
+
+```bash
+MCP_AUTH_TOKEN="$SPACE_TOKEN" \
+  cargo run -p anda_brain -- mcp --space-id my_space_001 local --db ./data
+```
+
+Both MCP modes use the same storage/model configuration as the HTTP service and expose these tools:
+
+| Tool | Purpose | Scope |
+| ---- | ------- | ----- |
+| `anda_brain_remember_conversation` | Encode conversation messages into memory | `write` |
+| `anda_brain_recall_memory` | Ask natural-language questions against memory | `read` |
+| `anda_brain_run_maintenance` | Trigger memory consolidation/pruning | `write` |
+| `anda_brain_get_space_info` | Read space statistics and metadata | `read` |
+| `anda_brain_get_formation_status` | Read formation/maintenance progress | `read` |
+| `anda_brain_execute_kip_readonly` | Run read-only KIP for advanced graph inspection | `read` |
+| `anda_brain_get_or_init_user` | Get or create a counterparty concept | `write` |
+| `anda_brain_list_conversations` | Page through tracked conversations | `read` |
+| `anda_brain_get_conversation` | Read one tracked conversation or delta | `read` |
+
+If authentication is enabled, pass a CWT or space token. Remote MCP reads it from the HTTP `Authorization` header; stdio reads it from `MCP_AUTH_TOKEN` or `--mcp-auth-token`. For local-only development with auth disabled, the token can be omitted. Remote MCP auto-create requires `ED25519_PUBKEYS` plus a `write` CWT for the target space before the missing space is created. Use `MCP_HTTP_ALLOWED_HOSTS` when exposing remote MCP behind a company domain or reverse proxy.
 
 ### Content Negotiation
 
@@ -369,6 +403,16 @@ The schema is self-describing — all type definitions are stored as nodes withi
 | `SHARDING_IDX`         | `--sharding-idx`         | `0`                                 | Shard index for this instance                                                        |
 | `MANAGERS`             | `--managers`             | —                                   | Comma-separated manager principal IDs                                                |
 | `CORS_ORIGINS`         | `--cors-origins`         | —                                   | CORS allowed origins: empty = disabled, `*` = allow all, or comma-separated origins  |
+| `MCP_HTTP_ENABLED`     | `--mcp-http-enabled`     | `true`                              | Mount Streamable HTTP MCP with the HTTP service                                      |
+| `MCP_HTTP_PATH_PREFIX` | `--mcp-http-path-prefix` | `/mcp`                              | Remote MCP prefix; clients connect to `{prefix}/{space_id}`                          |
+| `MCP_HTTP_ALLOWED_HOSTS` | `--mcp-http-allowed-hosts` | —                                | Comma-separated Host allowlist for remote MCP; use `*` only behind trusted controls  |
+| `MCP_HTTP_ALLOWED_ORIGINS` | `--mcp-http-allowed-origins` | —                            | Comma-separated browser Origin allowlist for remote MCP                              |
+| `MCP_HTTP_AUTO_CREATE_SPACE` | `--mcp-http-auto-create-space` | `false`                    | Create remote MCP spaces on first use after a valid `write` CWT                      |
+| `MCP_HTTP_AUTO_CREATE_TIER` | `--mcp-http-auto-create-tier` | `1`                         | Tier used for remote MCP auto-created spaces                                         |
+| `MCP_SPACE_ID`         | `mcp --space-id`         | —                                   | Space exposed by the MCP stdio server                                                |
+| `MCP_AUTH_TOKEN`       | `mcp --mcp-auth-token`   | —                                   | CWT or space token used by MCP tools                                                 |
+| `MCP_AUTO_CREATE_SPACE` | `mcp --mcp-auto-create-space` | `false`                       | Create the MCP space if it does not exist                                            |
+| `MCP_AUTO_CREATE_TIER` | `mcp --mcp-auto-create-tier` | `1`                            | Tier used for MCP auto-created spaces                                                |
 
 `CORS_ORIGINS` examples:
 - `""` (empty): CORS disabled
@@ -392,8 +436,16 @@ cargo run -p anda_brain
 # Local filesystem storage
 cargo run -p anda_brain -- local --db ./data
 
+# HTTP service also serves remote MCP at /mcp/{space_id}
+MCP_HTTP_ALLOWED_HOSTS="brain.example.com" \
+  cargo run -p anda_brain -- local --db ./data
+
 # AWS S3 storage
 cargo run -p anda_brain -- aws --bucket my-bucket --region us-east-1
+
+# MCP stdio server for local MCP clients
+MCP_AUTH_TOKEN="$SPACE_TOKEN" \
+  cargo run -p anda_brain -- mcp --space-id my_space_001 local --db ./data
 ```
 
 ### Run with Docker image

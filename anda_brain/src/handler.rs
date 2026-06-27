@@ -486,7 +486,7 @@ pub async fn list_space_tokens(
 
     let now_ms = unix_ms();
     let _ = app
-        .check_auth(&token, &space_id, TokenScope::Read, now_ms)
+        .check_auth(&token, &space_id, TokenScope::Write, now_ms)
         .map_err(|_| AppError::unauthorized())?;
 
     let space = app
@@ -644,7 +644,7 @@ pub async fn get_byok(
 
     let now_ms = unix_ms();
     let _ = app
-        .check_auth(&token, &space_id, TokenScope::Read, now_ms)
+        .check_auth(&token, &space_id, TokenScope::Write, now_ms)
         .map_err(|_| AppError::unauthorized())?;
 
     let space = app
@@ -809,7 +809,9 @@ mod tests {
         http::{HeaderMap, StatusCode, header},
         response::{IntoResponse, Response},
     };
-    use ic_cose_types::cose::ed25519::VerifyingKey;
+    use cose2::{CoseMap, Label, Sign1Message, Value as CoseValue, cwt::Claims, iana};
+    use ic_auth_types::ByteBufB64;
+    use ic_cose_types::cose::ed25519::{SigningKey, VerifyingKey, ed25519_sign};
     use object_store::memory::InMemory;
     use serde::Serialize;
     use serde_json::{Value, json};
@@ -856,6 +858,44 @@ mod tests {
         bytes[0] = 0x58;
         let key = VerifyingKey::from_bytes(&bytes).unwrap();
         test_app_state_with_pubkeys(name, sharding, vec![key])
+    }
+
+    fn test_signing_key() -> SigningKey {
+        SigningKey::from_bytes(&[7u8; 32])
+    }
+
+    fn test_app_state_with_signing_key(
+        name: &str,
+        sharding: u32,
+        signing_key: &SigningKey,
+    ) -> AppState {
+        test_app_state_with_pubkeys(name, sharding, vec![signing_key.verifying_key()])
+    }
+
+    fn signed_token(
+        signing_key: &SigningKey,
+        user: Principal,
+        audience: &str,
+        scope: &str,
+    ) -> String {
+        let claims = Claims {
+            subject: Some(user.to_string()),
+            audience: Some(audience.to_string()),
+            extra: CoseMap::from_iter([(
+                Label::Int(iana::CWTClaimScope),
+                CoseValue::Text(scope.to_string()),
+            )]),
+            ..Default::default()
+        };
+        let payload = claims.to_vec().unwrap();
+        let mut sign1 = Sign1Message::new(Some(payload));
+        let tbs_data = sign1
+            .prepare_signature(Some(Label::Int(iana::AlgorithmEdDSA)), None, None)
+            .unwrap();
+        sign1
+            .set_signature(ed25519_sign(signing_key.as_bytes(), &tbs_data).to_vec())
+            .unwrap();
+        ByteBufB64(sign1.to_vec().unwrap()).to_string()
     }
 
     fn test_app_state_with_pubkeys(
@@ -1244,6 +1284,95 @@ mod tests {
                 .unwrap()
                 .contains("does not match")
         );
+    }
+
+    #[tokio::test]
+    async fn management_secret_handlers_require_write_cwt() {
+        let signing_key = test_signing_key();
+        let app = test_app_state_with_signing_key("handler_secret_scope", 0, &signing_key);
+        let space_id = "handler_secret_scope_space";
+        let space = create_loaded_space(&app, space_id).await;
+        space
+            .update_byok(ModelConfig {
+                family: "openai".to_string(),
+                model: "handler-secret-model".to_string(),
+                api_base: "https://api.example.test".to_string(),
+                api_key: "handler-secret-key".to_string(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        space
+            .add_space_token(
+                "SThandler-secret-token".to_string(),
+                AddSpaceTokenInput {
+                    scope: TokenScope::Write,
+                    name: "writer".to_string(),
+                    expires_at: None,
+                },
+                unix_ms(),
+            )
+            .await
+            .unwrap();
+
+        let read_cwt = signed_token(&signing_key, SELF_USER_ID, space_id, "read");
+        let write_cwt = signed_token(&signing_key, SELF_USER_ID, space_id, "write");
+
+        let byok_denied = err_json(
+            get_byok(
+                State(app.clone()),
+                Path(space_id.to_string()),
+                accept_json(),
+                HeaderVals(read_cwt.clone(), 0),
+            )
+            .await,
+            StatusCode::UNAUTHORIZED,
+        )
+        .await;
+        assert_eq!(
+            byok_denied["error"]["message"].as_str(),
+            Some("authentication failed")
+        );
+
+        let tokens_denied = err_json(
+            list_space_tokens(
+                State(app.clone()),
+                Path(space_id.to_string()),
+                accept_json(),
+                HeaderVals(read_cwt, 0),
+            )
+            .await,
+            StatusCode::UNAUTHORIZED,
+        )
+        .await;
+        assert_eq!(
+            tokens_denied["error"]["message"].as_str(),
+            Some("authentication failed")
+        );
+
+        let byok = ok_json(
+            get_byok(
+                State(app.clone()),
+                Path(space_id.to_string()),
+                accept_json(),
+                HeaderVals(write_cwt.clone(), 0),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(byok["result"]["api_key"], "handler-secret-key");
+
+        let tokens = ok_json(
+            list_space_tokens(
+                State(app),
+                Path(space_id.to_string()),
+                accept_json(),
+                HeaderVals(write_cwt, 0),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(tokens["result"][0]["token"], "SThandler-secret-token");
     }
 
     #[tokio::test]

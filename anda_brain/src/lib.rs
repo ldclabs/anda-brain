@@ -5,6 +5,7 @@ use std::str::FromStr;
 
 pub mod agents;
 pub mod handler;
+pub mod mcp;
 pub mod payload;
 pub mod space;
 pub mod types;

@@ -9,6 +9,7 @@
   - 请求：`Content-Type: application/json | application/cbor | text/markdown`
   - 响应：`Accept: application/json | application/cbor | text/markdown`
 - 大多数业务接口返回 RPC 包装结构：`RpcResponse<T>`
+- MCP client 可使用内置 Streamable HTTP 端点：`/mcp/<space_id>`，也可使用本地 stdio server：`anda_brain mcp --space-id <space_id> [local|aws]`
 
 ---
 
@@ -107,6 +108,21 @@ export interface CreateOrUpdateSpaceInput {
 export interface GetOrInitUserInput {
   user: string;
   name?: string;
+}
+
+export interface McpServerConfig {
+  space_id: string;
+  auth_token?: string;
+  auto_create_space?: boolean;
+  auto_create_tier?: number;
+}
+
+export interface McpHttpServerConfig {
+  path_prefix?: string; // 默认 "/mcp"; client 连接 {path_prefix}/{space_id}
+  allowed_hosts?: string[]; // rmcp 默认只允许 loopback；公司域名需要显式配置
+  allowed_origins?: string[]; // 浏览器型 MCP client 使用
+  auto_create_space?: boolean;
+  auto_create_tier?: number;
 }
 
 export interface Concept {
@@ -272,9 +288,44 @@ export interface KipResponse<T> {
 
 ---
 
-## 3) 接口列表
+## 3) MCP Server
 
-## 3.1 公共接口
+HTTP 服务启动时，Anda Brain 会暴露 Streamable HTTP MCP 端点，供支持 MCP client 的智能体直接调用：
+
+```text
+https://your-brain-host/mcp/my_space_001
+```
+
+Client 通过 URL path 选择目标记忆空间，并使用与 REST 相同的 CWT 或 space token：`Authorization: Bearer <token>`。这适合公司内部多用户智能体平台：为每位员工分配一个 Brain space，员工的智能体通过 MCP 连接自己的空间。
+
+Anda Brain 也可作为本地 MCP stdio server 运行：
+
+```bash
+MCP_AUTH_TOKEN="$SPACE_TOKEN" \
+  anda_brain mcp --space-id my_space_001 local --db ./data
+```
+
+两种 MCP 模式都复用 HTTP 服务的模型、认证和存储配置。stdio 模式的嵌套 storage 子命令可省略（内存开发模式），也可以使用 `local --db ./data` 持久化到本地，或使用 `aws --bucket ... --region ...` 连接 S3。
+
+| Tool | Input | Output | Scope |
+| ---- | ----- | ------ | ----- |
+| `anda_brain_remember_conversation` | `FormationInput` 形状（`messages`, `context`, `timestamp`） | `AgentOutput` | `write` |
+| `anda_brain_recall_memory` | `RecallInput` 形状（`query`, `context`） | `AgentOutput` | `read` |
+| `anda_brain_run_maintenance` | `MaintenanceInput` 形状 | `AgentOutput` | `write` |
+| `anda_brain_get_space_info` | 无 | `SpaceInfo` | `read` |
+| `anda_brain_get_formation_status` | 无 | `FormationStatus` | `read` |
+| `anda_brain_execute_kip_readonly` | `{ command?, commands?, parameters?, dry_run? }` | `KipResponse` | `read` |
+| `anda_brain_get_or_init_user` | `{ user, name? }` | `Concept` | `write` |
+| `anda_brain_list_conversations` | `{ collection?, cursor?, limit? }` | `{ conversations, next_cursor }` | `read` |
+| `anda_brain_get_conversation` | `{ conversation_id, collection?, delta?, messages_offset?, artifacts_offset? }` | `Conversation` 或 `ConversationDelta` | `read` |
+
+当设置了 `ED25519_PUBKEYS` 时，远程 MCP client 需要携带 `Authorization` bearer token；stdio 模式请通过 `MCP_AUTH_TOKEN` 或 `--mcp-auth-token` 配置 CWT 或 space token。`read` 工具也可无 token 访问 public space。远程 MCP 经过公司域名或反向代理暴露时，请设置 `MCP_HTTP_ALLOWED_HOSTS`。本地 stdio 开发可用 `--mcp-auto-create-space` 自动创建目标 space；远程开发可用 `MCP_HTTP_AUTO_CREATE_SPACE=true`，但远程缺失 space 创建前必须已配置 `ED25519_PUBKEYS`，并提供目标 space 的 `write` scope CWT。
+
+---
+
+## 4) 接口列表
+
+## 4.1 公共接口
 
 ### GET `/`
 
@@ -296,7 +347,7 @@ export interface KipResponse<T> {
 
 ---
 
-## 3.2 空间业务接口（`/v1/{space_id}`）
+## 4.2 空间业务接口（`/v1/{space_id}`）
 
 ### POST `/v1/{space_id}/formation`
 
@@ -376,12 +427,12 @@ export interface KipResponse<T> {
 
 ---
 
-## 3.3 空间管理接口（`/v1/{space_id}/management`）
+## 4.3 空间管理接口（`/v1/{space_id}/management`）
 
 ### GET `/v1/{space_id}/management/space_tokens`
 
 - 作用：列出 Space Token
-- 鉴权：必须通过 CWT `read`（用户管理级鉴权）
+- 鉴权：必须通过 CWT `write`（用户管理级鉴权；响应包含原始 token secret）
 - 响应：`RpcResponse<SpaceToken[]>`
 
 ### POST `/v1/{space_id}/management/add_space_token`
@@ -415,7 +466,7 @@ export interface KipResponse<T> {
 ### GET `/v1/{space_id}/management/space_byok`
 
 - 作用：获取 BYOK（Bring Your Own Key）配置，即使用自定义模型配置
-- 鉴权：必须通过 CWT `read`（用户管理级鉴权）
+- 鉴权：必须通过 CWT `write`（用户管理级鉴权；响应包含模型供应商凭据）
 - 响应：`RpcResponse<ModelConfig>`
 
 ### PATCH `/v1/{space_id}/management/space_byok`
@@ -427,7 +478,7 @@ export interface KipResponse<T> {
 
 ---
 
-## 3.4 管理员接口（`/admin`）
+## 4.4 管理员接口（`/admin`）
 
 ### POST `/admin/create_space`
 
@@ -445,7 +496,7 @@ export interface KipResponse<T> {
 
 ---
 
-## 4) 前端调用示例（TS）
+## 5) 前端调用示例（TS）
 
 ```ts
 async function rpcPost<TReq, TRes>(
@@ -482,7 +533,7 @@ if (recall.error) {
 
 ---
 
-## 5) 错误语义
+## 6) 错误语义
 
 - 认证失败：HTTP `401`，响应体为 `RpcError`
 - 参数错误：HTTP `400`，响应体为 `RpcError`

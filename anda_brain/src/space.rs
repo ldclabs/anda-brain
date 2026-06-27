@@ -146,6 +146,10 @@ impl AppState {
         }
     }
 
+    pub fn cwt_auth_enabled(&self) -> bool {
+        !self.ed25519_pubkeys.is_empty()
+    }
+
     // 平台管理员权限
     pub fn check_admin(
         &self,

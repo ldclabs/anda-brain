@@ -23,7 +23,13 @@ use tower_http::{
     cors::{AllowHeaders, AllowMethods, CorsLayer},
 };
 
-use anda_brain::{agents::SELF_USER_ID, handler::*, parse_ed25519_pubkeys, space::AppState};
+use anda_brain::{
+    agents::SELF_USER_ID,
+    handler::*,
+    mcp::{McpHttpServerConfig, McpServerConfig, build_streamable_http_service, run_stdio_server},
+    parse_ed25519_pubkeys,
+    space::AppState,
+};
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
@@ -83,12 +89,84 @@ struct Cli {
     #[arg(long, env = "CORS_ORIGINS", default_value = "")]
     cors_origins: String,
 
+    /// Enable the Streamable HTTP MCP endpoint mounted with the HTTP service
+    #[arg(
+        long,
+        env = "MCP_HTTP_ENABLED",
+        default_value_t = true,
+        action = clap::ArgAction::Set
+    )]
+    mcp_http_enabled: bool,
+
+    /// HTTP path prefix for remote MCP clients. Clients connect to {prefix}/{space_id}
+    #[arg(long, env = "MCP_HTTP_PATH_PREFIX", default_value = "/mcp")]
+    mcp_http_path_prefix: String,
+
+    /// Allowed Host values for remote MCP requests, separated by comma. Use "*" to allow all.
+    #[arg(long, env = "MCP_HTTP_ALLOWED_HOSTS", default_value = "")]
+    mcp_http_allowed_hosts: String,
+
+    /// Allowed browser Origin values for remote MCP requests, separated by comma. Use "*" to allow all.
+    #[arg(long, env = "MCP_HTTP_ALLOWED_ORIGINS", default_value = "")]
+    mcp_http_allowed_origins: String,
+
+    /// Create remote MCP spaces on first use when they do not exist
+    #[arg(long, env = "MCP_HTTP_AUTO_CREATE_SPACE", default_value_t = false)]
+    mcp_http_auto_create_space: bool,
+
+    /// Tier used when remote MCP auto-creates a memory space
+    #[arg(long, env = "MCP_HTTP_AUTO_CREATE_TIER", default_value_t = 1)]
+    mcp_http_auto_create_tier: u32,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
 
 #[derive(Subcommand, Clone)]
 pub enum Commands {
+    Local {
+        #[clap(long, env = "LOCAL_DB_PATH", default_value = "./db")]
+        db: String,
+    },
+    Aws {
+        #[arg(long, env = "AWS_BUCKET")]
+        bucket: String,
+
+        #[arg(long, env = "AWS_REGION")]
+        region: String,
+    },
+    Mcp {
+        /// Memory space exposed through MCP tools
+        #[arg(long, env = "MCP_SPACE_ID")]
+        space_id: String,
+
+        /// Optional CWT or space token used to authorize MCP tool calls
+        #[arg(long = "mcp-auth-token", env = "MCP_AUTH_TOKEN")]
+        auth_token: Option<String>,
+
+        /// Create the MCP memory space if it does not exist
+        #[arg(
+            long = "mcp-auto-create-space",
+            env = "MCP_AUTO_CREATE_SPACE",
+            default_value_t = false
+        )]
+        auto_create_space: bool,
+
+        /// Tier used when --mcp-auto-create-space creates the memory space
+        #[arg(
+            long = "mcp-auto-create-tier",
+            env = "MCP_AUTO_CREATE_TIER",
+            default_value_t = 1
+        )]
+        auto_create_tier: u32,
+
+        #[command(subcommand)]
+        storage: Option<StorageCommand>,
+    },
+}
+
+#[derive(Subcommand, Clone)]
+pub enum StorageCommand {
     Local {
         #[clap(long, env = "LOCAL_DB_PATH", default_value = "./db")]
         db: String,
@@ -184,9 +262,46 @@ fn default_db_config() -> DBConfig {
     }
 }
 
+fn split_csv_values(input: &str) -> Vec<String> {
+    input
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn normalize_http_path_prefix(prefix: &str) -> String {
+    let trimmed = prefix.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        "/mcp".to_string()
+    } else if trimmed.starts_with('/') {
+        trimmed.to_string()
+    } else {
+        format!("/{trimmed}")
+    }
+}
+
+fn mcp_http_config_from_cli(cli: &Cli) -> McpHttpServerConfig {
+    McpHttpServerConfig {
+        path_prefix: normalize_http_path_prefix(&cli.mcp_http_path_prefix),
+        auto_create_space: cli.mcp_http_auto_create_space,
+        auto_create_tier: cli.mcp_http_auto_create_tier,
+        allowed_hosts: split_csv_values(&cli.mcp_http_allowed_hosts),
+        allowed_origins: split_csv_values(&cli.mcp_http_allowed_origins),
+        stateful_mode: true,
+        json_response: false,
+        sse_keep_alive_secs: Some(15),
+    }
+}
+
 // grcov-excl-start: route registration is verified through direct handler tests; axum's builder chain gives low-value line coverage.
-fn build_router() -> Router<AppState> {
-    Router::new()
+fn build_router(
+    app_state: AppState,
+    cli: &Cli,
+    cancel_token: CancellationToken,
+) -> Router<AppState> {
+    let mut router = Router::new()
         .route("/", routing::get(get_website))
         .route("/favicon.ico", routing::get(favicon))
         .route("/apple-touch-icon.webp", routing::get(apple_touch_icon))
@@ -257,7 +372,17 @@ fn build_router() -> Router<AppState> {
             routing::post(update_space_tier),
         )
         .route("/admin/create_space", routing::post(create_space))
-        .layer(CompressionLayer::new())
+        .layer(CompressionLayer::new());
+
+    if cli.mcp_http_enabled {
+        let mcp_config = mcp_http_config_from_cli(cli);
+        let path_prefix = mcp_config.path_prefix.clone();
+        let mcp_service =
+            build_streamable_http_service(app_state, mcp_config, cancel_token.child_token());
+        router = router.nest_service(&path_prefix, mcp_service);
+    }
+
+    router
 }
 // grcov-excl-stop
 
@@ -283,13 +408,26 @@ fn build_cors(cors_origins: &str) -> CorsLayer {
 fn object_store_from_command(
     command: Option<Commands>,
 ) -> Result<(Arc<dyn ObjectStore>, String), BoxError> {
+    let command = match command {
+        Some(Commands::Local { db }) => Some(StorageCommand::Local { db }),
+        Some(Commands::Aws { bucket, region }) => Some(StorageCommand::Aws { bucket, region }),
+        Some(Commands::Mcp { storage, .. }) => storage,
+        None => None,
+    };
+
+    object_store_from_storage_command(command)
+}
+
+fn object_store_from_storage_command(
+    command: Option<StorageCommand>,
+) -> Result<(Arc<dyn ObjectStore>, String), BoxError> {
     match command {
-        Some(Commands::Local { db }) => {
+        Some(StorageCommand::Local { db }) => {
             let os = LocalFileSystem::new_with_prefix(db)?;
             let os = MetaStoreBuilder::new(os, 100000).build();
             Ok((Arc::new(os), "local".to_string()))
         }
-        Some(Commands::Aws { bucket, region }) => {
+        Some(StorageCommand::Aws { bucket, region }) => {
             let os = AmazonS3Builder::from_env()
                 .with_bucket_name(bucket)
                 .with_region(region)
@@ -311,7 +449,7 @@ struct ServiceRuntime {
     model_name: String,
 }
 
-fn build_service_runtime(cli: &Cli) -> Result<ServiceRuntime, BoxError> {
+fn build_app_state(cli: &Cli) -> Result<(AppState, String), BoxError> {
     let http_client = build_http_client(cli)?;
     let managers = parse_managers(&cli.managers)?;
     let management = Arc::new(BaseManagement {
@@ -340,7 +478,15 @@ fn build_service_runtime(cli: &Cli) -> Result<ServiceRuntime, BoxError> {
         cli.sharding_idx,
     );
 
-    let app = build_router()
+    Ok((app_state, db_type))
+}
+
+fn build_service_runtime(
+    cli: &Cli,
+    cancel_token: CancellationToken,
+) -> Result<ServiceRuntime, BoxError> {
+    let (app_state, db_type) = build_app_state(cli)?;
+    let app = build_router(app_state.clone(), cli, cancel_token)
         .layer(build_cors(&cli.cors_origins))
         .with_state(app_state.clone());
     let addr: SocketAddr = cli.addr.parse()?;
@@ -408,15 +554,36 @@ async fn main() -> Result<(), BoxError> {
     dotenv::dotenv().ok();
     let cli = Cli::parse();
 
-    // Initialize structured logging with JSON format
-    Builder::with_level(&get_env_level().to_string())
-        .with_target_writer("*", new_writer(tokio::io::stdout()))
-        .init();
+    if !matches!(cli.command, Some(Commands::Mcp { .. })) {
+        // Initialize structured logging with JSON format. MCP stdio keeps stdout reserved
+        // for JSON-RPC messages, so the MCP subcommand intentionally skips this logger.
+        Builder::with_level(&get_env_level().to_string())
+            .with_target_writer("*", new_writer(tokio::io::stdout()))
+            .init();
+    }
 
     // Create global cancellation token for graceful shutdown
     let global_cancel_token = CancellationToken::new();
-    let runtime = build_service_runtime(&cli)?;
-    run_service(runtime, global_cancel_token).await
+    match cli.command.clone() {
+        Some(Commands::Mcp {
+            space_id,
+            auth_token,
+            auto_create_space,
+            auto_create_tier,
+            ..
+        }) => {
+            let (app_state, _) = build_app_state(&cli)?;
+            let mut mcp_config =
+                McpServerConfig::stdio(space_id, auth_token.filter(|token| !token.is_empty()));
+            mcp_config.auto_create_space = auto_create_space;
+            mcp_config.auto_create_tier = auto_create_tier;
+            run_stdio_server(app_state, mcp_config).await
+        }
+        _ => {
+            let runtime = build_service_runtime(&cli, global_cancel_token.child_token())?;
+            run_service(runtime, global_cancel_token).await
+        }
+    }
 }
 // grcov-excl-stop
 
@@ -469,8 +636,9 @@ async fn create_reuse_port_listener(addr: SocketAddr) -> Result<tokio::net::TcpL
 mod tests {
     use super::{
         AnyHost, Cli, Commands, build_cors, build_http_client, build_router, build_service_runtime,
-        create_reuse_port_listener, default_db_config, model_config_from_cli,
-        object_store_from_command, parse_ed25519_pubkeys, parse_managers, run_service,
+        create_reuse_port_listener, default_db_config, mcp_http_config_from_cli,
+        model_config_from_cli, normalize_http_path_prefix, object_store_from_command,
+        parse_ed25519_pubkeys, parse_managers, run_service, split_csv_values,
     };
     use anda_brain::agents::SELF_USER_ID;
     use cose2::{Key as CoseKey, iana};
@@ -493,6 +661,12 @@ mod tests {
             sharding_idx: 7,
             managers: String::new(),
             cors_origins: String::new(),
+            mcp_http_enabled: true,
+            mcp_http_path_prefix: "/mcp".to_string(),
+            mcp_http_allowed_hosts: String::new(),
+            mcp_http_allowed_origins: String::new(),
+            mcp_http_auto_create_space: false,
+            mcp_http_auto_create_tier: 1,
             command: None,
         }
     }
@@ -529,10 +703,26 @@ mod tests {
         assert_eq!(db.storage.cache_max_capacity, 100000);
         assert_eq!(db.storage.object_chunk_size, 256 * 1024);
 
-        let _ = build_router();
+        let (app_state, _) = super::build_app_state(&test_cli()).unwrap();
+        let _ = build_router(app_state, &test_cli(), CancellationToken::new());
         let _ = build_cors("");
         let _ = build_cors("*");
         let _ = build_cors("https://example.test, https://app.example.test");
+
+        assert_eq!(normalize_http_path_prefix("mcp/"), "/mcp");
+        assert_eq!(
+            split_csv_values("localhost, brain.example.com, "),
+            vec!["localhost", "brain.example.com"]
+        );
+        cli.mcp_http_path_prefix = "brain-mcp/".to_string();
+        cli.mcp_http_allowed_hosts = "brain.example.com,127.0.0.1".to_string();
+        cli.mcp_http_allowed_origins = "https://agents.example.com".to_string();
+        cli.mcp_http_auto_create_space = true;
+        let mcp = mcp_http_config_from_cli(&cli);
+        assert_eq!(mcp.path_prefix, "/brain-mcp");
+        assert_eq!(mcp.allowed_hosts.len(), 2);
+        assert_eq!(mcp.allowed_origins, vec!["https://agents.example.com"]);
+        assert!(mcp.auto_create_space);
     }
 
     #[test]
@@ -541,7 +731,7 @@ mod tests {
         cli.managers = SELF_USER_ID.to_string();
         cli.cors_origins = "*".to_string();
 
-        let runtime = build_service_runtime(&cli).unwrap();
+        let runtime = build_service_runtime(&cli, CancellationToken::new()).unwrap();
 
         assert_eq!(runtime.addr, "127.0.0.1:0".parse().unwrap());
         assert_eq!(runtime.db_type, "memory");
@@ -554,7 +744,7 @@ mod tests {
 
         let mut invalid_addr = cli;
         invalid_addr.addr = "not an address".to_string();
-        assert!(build_service_runtime(&invalid_addr).is_err());
+        assert!(build_service_runtime(&invalid_addr, CancellationToken::new()).is_err());
     }
 
     #[test]
@@ -650,8 +840,8 @@ mod tests {
 
     #[tokio::test]
     async fn run_service_exits_when_cancelled() {
-        let runtime = build_service_runtime(&test_cli()).unwrap();
         let cancel = CancellationToken::new();
+        let runtime = build_service_runtime(&test_cli(), cancel.child_token()).unwrap();
         let cancel_after_start = cancel.clone();
         tokio::spawn(async move {
             sleep(Duration::from_millis(50)).await;

@@ -232,7 +232,7 @@ Anda Brain is [open-source software](https://github.com/ldclabs/anda-brain), des
 Get started in 3 steps:
 1. **Deploy the service** — run the binary or Docker image (see [Running Locally](#running-locally) below).
 2. Create a **Brain Space** (`spaceId`) via `POST /admin/create_space`, then generate an **API Key** (`spaceToken`) via `POST /v1/{space_id}/management/add_space_token`.
-3. Call the Formation / Recall / Maintenance APIs, or let your agent framework read [SKILL.md](https://github.com/ldclabs/anda-brain/blob/main/skills/anda-brain/SKILL.md) (your deployment also serves it at `/SKILL.md`) for one-click integration.
+3. Call the Formation / Recall / Maintenance APIs, connect through the built-in MCP server, or let your agent framework read [SKILL.md](https://github.com/ldclabs/anda-brain/blob/main/skills/anda-brain/SKILL.md) (your deployment also serves it at `/SKILL.md`) for one-click integration.
 
 Want a ready-to-run agent instead of building your own? Check out [**Anda Bot**](https://github.com/ldclabs/anda-bot) — an open-source AI agent built on Anda Brain.
 
@@ -249,7 +249,14 @@ For detailed technical documentation, API specs, and integration guides, see [an
 
 # Run with AWS S3 storage (for enterprise cloud deployment)
 ./anda_brain aws --bucket my-bucket --region us-east-1
+
+# Run as a local MCP server over stdio for MCP-capable agents
+MCP_AUTH_TOKEN="$SPACE_TOKEN" ./anda_brain mcp --space-id my_space_001 local --db ./data
 ```
+
+HTTP service mode also exposes a Streamable HTTP MCP endpoint at `/mcp/<spaceId>`. For internal agent platforms, assign each employee a space and configure their MCP client with `https://your-brain-host/mcp/<spaceId>` plus `Authorization: Bearer <spaceToken-or-CWT>`. For local MCP clients, register `anda_brain mcp --space-id <spaceId> local --db <path>` as a stdio server.
+
+Both MCP transports expose memory tools such as `anda_brain_remember_conversation`, `anda_brain_recall_memory`, `anda_brain_run_maintenance`, and `anda_brain_execute_kip_readonly`.
 
 ### Integration Examples
 
