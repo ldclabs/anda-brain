@@ -1,8 +1,7 @@
 use anda_cognitive_nexus::ConceptPK;
 use anda_core::{
-    Agent, AgentContext, AgentOutput, BoxError, CompletionFeatures, CompletionRequest, Document,
-    Documents, FunctionDefinition, Json, Message, Resource, StateFeatures, Tool, ToolOutput,
-    estimate_tokens,
+    Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, Document, Documents,
+    FunctionDefinition, Json, Message, Resource, StateFeatures, Tool, ToolOutput, estimate_tokens,
 };
 use anda_engine::{
     context::{AgentCtx, BaseCtx},
@@ -25,7 +24,10 @@ use tokio::time::timeout;
 
 use anda_kip::{KipError, KipErrorCode, Request, Response};
 
-use super::{BrainHook, SELF_USER_ID, push_completed_history};
+use super::{
+    BrainHook, SELF_USER_ID, append_runner_history, compact_runner_if_needed,
+    push_completed_history,
+};
 use crate::types::RecallInput;
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/BrainRecall.md");
@@ -352,70 +354,116 @@ impl Agent<AgentCtx> for RecallAgent {
             Some(n) => n,
             None => load_notes_from_legacy(&ctx).await.unwrap_or_default(),
         };
-        match ctx
-            .completion(
-                CompletionRequest {
-                    instructions: format!(
-                        "{}\n\n---\n\n# `DESCRIBE PRIMER` Result:\n{}\n\n---\n\n# Your Notes:\n{}\n\n# Counterparty profile:\n{}\n\n# Current Datetime: {}",
-                        SELF_INSTRUCTIONS,
-                        primer,
-                        serde_json::to_string(&notes.items).unwrap_or_default(),
-                        serde_json::to_string(&counterparty_info).unwrap_or_default(),
-                        local_date_hour(now_ms).unwrap_or_default()
-                    ),
-                    prompt,
-                    chat_history,
-                    tools: ctx.tool_definitions(Some(&self.tool_dependencies())),
-                    tool_choice_required: true,
-                    ..Default::default()
-                },
-                vec![],
-            )
-            .await
-        {
-            Ok(mut output) => {
-                if !output.chat_history.is_empty() {
-                    // An anomalous result (e.g. cancelled before any output)
-                    // must not erase the original input from the record.
-                    conversation.messages.clear();
-                    conversation.append_messages(output.chat_history.clone());
-                }
-                conversation.status = if output.failed_reason.is_some() {
-                    ConversationStatus::Failed
-                } else {
-                    ConversationStatus::Completed
-                };
-                conversation.usage = output.usage.clone();
-                conversation.updated_at = unix_ms();
+        let mut runner = ctx.clone().completion_iter(
+            CompletionRequest {
+                instructions: format!(
+                    "{}\n\n---\n\n# `DESCRIBE PRIMER` Result:\n{}\n\n---\n\n# Your Notes:\n{}\n\n# Counterparty profile:\n{}\n\n# Current Datetime: {}",
+                    SELF_INSTRUCTIONS,
+                    primer,
+                    serde_json::to_string(&notes.items).unwrap_or_default(),
+                    serde_json::to_string(&counterparty_info).unwrap_or_default(),
+                    local_date_hour(now_ms).unwrap_or_default()
+                ),
+                prompt,
+                chat_history,
+                tools: ctx.tool_definitions(Some(&self.tool_dependencies())),
+                tool_choice_required: true,
+                ..Default::default()
+            },
+            vec![],
+        );
 
-                if let Some(ref failed_reason) = output.failed_reason {
-                    conversation.failed_reason = Some(failed_reason.clone());
-                } else {
-                    push_completed_history(&self.history, &conversation, 3);
+        let mut replace_initial_input = true;
+        let mut persisted_runner_history_len = 0;
+        let mut last_output: Option<AgentOutput> = None;
+        loop {
+            match compact_runner_if_needed(&mut runner, 0, true).await {
+                Ok(true) => {
+                    persisted_runner_history_len = 0;
+                    replace_initial_input = false;
                 }
-
-                if let Ok(changes) = conversation.to_changes() {
-                    let _ = self.conversations.update_conversation(conversation._id, changes).await;
+                Ok(false) => {}
+                Err(err) => {
+                    conversation.status = ConversationStatus::Failed;
+                    conversation.failed_reason = Some(err.to_string());
+                    conversation.updated_at = unix_ms();
+                    if let Ok(changes) = conversation.to_changes() {
+                        let _ = self
+                            .conversations
+                            .update_conversation(conversation._id, changes)
+                            .await;
+                    }
+                    self.hook
+                        .on_conversation_end(Self::NAME, &conversation)
+                        .await;
+                    return Err(err);
                 }
-                self.hook
-                    .on_conversation_end(Self::NAME, &conversation)
-                    .await;
-                output.conversation = Some(conversation._id);
-                Ok(output)
             }
-            Err(err) => {
-                conversation.status = ConversationStatus::Failed;
-                conversation.failed_reason = Some(err.to_string());
-                conversation.updated_at = unix_ms();
-                if let Ok(changes) = conversation.to_changes() {
-                    let _ = self.conversations.update_conversation(conversation._id, changes).await;
+
+            match runner.next().await {
+                Ok(None) => break,
+                Ok(Some(mut output)) => {
+                    let is_done = runner.is_done();
+                    append_runner_history(
+                        &mut conversation,
+                        &output.chat_history,
+                        &mut persisted_runner_history_len,
+                        &mut replace_initial_input,
+                    );
+                    conversation.status = if output.failed_reason.is_some() {
+                        ConversationStatus::Failed
+                    } else if is_done {
+                        ConversationStatus::Completed
+                    } else {
+                        ConversationStatus::Working
+                    };
+                    conversation.usage = output.usage.clone();
+                    conversation.updated_at = unix_ms();
+
+                    if let Some(ref failed_reason) = output.failed_reason {
+                        conversation.failed_reason = Some(failed_reason.clone());
+                    } else {
+                        conversation.failed_reason = None;
+                        push_completed_history(&self.history, &conversation, 3);
+                    }
+
+                    if let Ok(changes) = conversation.to_changes() {
+                        let _ = self
+                            .conversations
+                            .update_conversation(conversation._id, changes)
+                            .await;
+                    }
+                    output.conversation = Some(conversation._id);
+                    last_output = Some(output);
+
+                    if conversation.status == ConversationStatus::Failed
+                        || conversation.status == ConversationStatus::Completed
+                    {
+                        break;
+                    }
                 }
-                self.hook
-                    .on_conversation_end(Self::NAME, &conversation)
-                    .await;
-                Err(err)
+                Err(err) => {
+                    conversation.status = ConversationStatus::Failed;
+                    conversation.failed_reason = Some(err.to_string());
+                    conversation.updated_at = unix_ms();
+                    if let Ok(changes) = conversation.to_changes() {
+                        let _ = self
+                            .conversations
+                            .update_conversation(conversation._id, changes)
+                            .await;
+                    }
+                    self.hook
+                        .on_conversation_end(Self::NAME, &conversation)
+                        .await;
+                    return Err(err);
+                }
             }
         }
+
+        self.hook
+            .on_conversation_end(Self::NAME, &conversation)
+            .await;
+        last_output.ok_or_else(|| "completion runner returned no output".into())
     }
 }
 

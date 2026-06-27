@@ -1154,6 +1154,23 @@ mod tests {
             .iter()
             .find(|tool| tool.name == "anda_brain_recall_memory")
             .unwrap();
+        assert!(
+            recall
+                .description
+                .as_deref()
+                .is_some_and(|description| description.contains("Ask a natural-language question"))
+        );
+        let recall_schema = Value::Object(recall.input_schema.as_ref().clone());
+        let recall_properties = recall_schema["properties"].as_object().unwrap();
+        assert_eq!(recall_properties["query"]["type"].as_str(), Some("string"));
+        assert!(recall_properties.contains_key("context"));
+        assert!(
+            recall_schema["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|field| field.as_str() == Some("query"))
+        );
         assert_eq!(
             recall.annotations.as_ref().unwrap().read_only_hint,
             Some(true)
@@ -1163,10 +1180,38 @@ mod tests {
             .iter()
             .find(|tool| tool.name == "anda_brain_remember_conversation")
             .unwrap();
+        assert!(
+            remember
+                .description
+                .as_deref()
+                .is_some_and(|description| description.contains("Encode conversation messages"))
+        );
+        let remember_schema = Value::Object(remember.input_schema.as_ref().clone());
+        let remember_properties = remember_schema["properties"].as_object().unwrap();
+        assert!(remember_properties.contains_key("messages"));
+        assert!(
+            remember_schema["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|field| field.as_str() == Some("messages"))
+        );
         assert_eq!(
             remember.annotations.as_ref().unwrap().read_only_hint,
             Some(false)
         );
+
+        let info = tools
+            .iter()
+            .find(|tool| tool.name == "anda_brain_get_space_info")
+            .unwrap();
+        assert!(
+            info.description
+                .as_deref()
+                .is_some_and(|description| description.contains("statistics and metadata"))
+        );
+        let info_schema = Value::Object(info.input_schema.as_ref().clone());
+        assert_eq!(info_schema["type"].as_str(), Some("object"));
     }
 
     #[tokio::test]

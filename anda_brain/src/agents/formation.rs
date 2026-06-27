@@ -23,7 +23,7 @@ use std::{
     },
 };
 
-use super::{BrainHook, push_completed_history};
+use super::{BrainHook, append_runner_history, compact_runner_if_needed, push_completed_history};
 use crate::types::FormationInput;
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/BrainFormation.md");
@@ -350,37 +350,42 @@ impl FormationAgent {
             },
             vec![],
         );
+        runner.set_unbound(true);
 
-        // Review after formation to ensure quality and correctness
-        if should_review {
-            runner.follow_up(REVIEW_INSTRUCTIONS.to_string());
-        }
-
-        let mut first_round = true;
+        let mut replace_initial_input = true;
+        let mut persisted_runner_history_len = 0;
+        let mut review_pending = should_review;
         loop {
+            match compact_runner_if_needed(&mut runner, 0, true).await {
+                Ok(true) => {
+                    persisted_runner_history_len = 0;
+                    replace_initial_input = false;
+                }
+                Ok(false) => {}
+                Err(err) => {
+                    self.mark_conversation_failed(
+                        conversation,
+                        format!("CompletionRunner error: {err:?}"),
+                    )
+                    .await;
+                    break;
+                }
+            }
+
             match runner.next().await {
                 Ok(None) => break,
-                Ok(Some(mut res)) => {
+                Ok(Some(res)) => {
                     let now_ms = unix_ms();
-                    let is_done = runner.is_done();
+                    let ready_for_review =
+                        review_pending && res.failed_reason.is_none() && runner.is_idle();
+                    let is_done = runner.is_done() || runner.is_idle() && !ready_for_review;
 
-                    if res.chat_history.is_empty() {
-                        // An anomalous round (e.g. cancelled before any output)
-                        // must not erase the original input from the record.
-                    } else if first_round {
-                        first_round = false;
-                        conversation.messages.clear();
-                        conversation.append_messages(res.chat_history);
-                    } else {
-                        let existing_len = conversation.messages.len();
-                        if res.chat_history.len() >= existing_len {
-                            res.chat_history.drain(0..existing_len);
-                            conversation.append_messages(res.chat_history);
-                        } else {
-                            conversation.messages.clear();
-                            conversation.append_messages(res.chat_history);
-                        }
-                    }
+                    append_runner_history(
+                        conversation,
+                        &res.chat_history,
+                        &mut persisted_runner_history_len,
+                        &mut replace_initial_input,
+                    );
 
                     conversation.status = if res.failed_reason.is_some() {
                         ConversationStatus::Failed
@@ -423,6 +428,16 @@ impl FormationAgent {
                     if conversation.status == ConversationStatus::Cancelled
                         || conversation.status == ConversationStatus::Failed
                     {
+                        break;
+                    }
+
+                    if ready_for_review {
+                        runner.follow_up(REVIEW_INSTRUCTIONS.to_string());
+                        review_pending = false;
+                        continue;
+                    }
+
+                    if is_done {
                         break;
                     }
                 }
@@ -530,11 +545,12 @@ mod tests {
         types::{FormationInput, InputContext, MaintenanceInput, MaintenanceScope},
     };
     use anda_core::{
-        Agent, AgentOutput, BoxError, BoxPinFut, CompletionRequest, Message, Principal,
+        Agent, AgentOutput, BoxError, BoxPinFut, CompletionRequest, ContentPart, Message,
+        Principal, Usage,
     };
     use anda_db::{database::DBConfig, storage::StorageConfig};
     use anda_engine::{
-        context::AgentCtx,
+        context::{AgentCtx, COMPACTION_PROMPT},
         management::{BaseManagement, Visibility},
         memory::{Conversation, ConversationRef, ConversationStatus},
         model::{CompletionFeaturesDyn, Model, Models, reqwest},
@@ -542,11 +558,11 @@ mod tests {
     };
     use object_store::memory::InMemory;
     use serde_json::json;
-    use std::collections::BTreeSet;
     use std::sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
     };
+    use std::{collections::BTreeSet, sync::Mutex};
     use tokio::time::{Duration, sleep};
 
     #[derive(Debug)]
@@ -669,6 +685,98 @@ mod tests {
                 })
             })
         }
+    }
+
+    #[derive(Debug)]
+    struct CompactionCompleter {
+        requests: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl CompletionFeaturesDyn for CompactionCompleter {
+        fn model_name(&self) -> String {
+            "formation-compaction-test-model".to_string()
+        }
+
+        fn completion(&self, req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            let requests = self.requests.clone();
+            Box::pin(async move {
+                let text = request_text(&req);
+                requests.lock().unwrap().push(text.clone());
+                if text.contains(COMPACTION_PROMPT.trim()) {
+                    return Ok(AgentOutput {
+                        content: "handoff summary".to_string(),
+                        chat_history: vec![Message {
+                            role: "assistant".to_string(),
+                            content: vec!["summary turn".to_string().into()],
+                            ..Default::default()
+                        }],
+                        usage: Usage {
+                            input_tokens: 8,
+                            output_tokens: 2,
+                            requests: 1,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    });
+                }
+
+                if text.contains("handoff summary") {
+                    return Ok(AgentOutput {
+                        content: "review complete".to_string(),
+                        chat_history: vec![Message {
+                            role: "assistant".to_string(),
+                            content: vec!["reviewed after compaction".to_string().into()],
+                            ..Default::default()
+                        }],
+                        usage: Usage {
+                            input_tokens: 16,
+                            output_tokens: 4,
+                            requests: 1,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    });
+                }
+
+                Ok(AgentOutput {
+                    content: "formation draft".to_string(),
+                    chat_history: vec![Message {
+                        role: "assistant".to_string(),
+                        content: vec!["draft before compaction".to_string().into()],
+                        ..Default::default()
+                    }],
+                    usage: Usage {
+                        input_tokens: 900,
+                        output_tokens: 4,
+                        requests: 1,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })
+            })
+        }
+    }
+
+    fn part_text(part: &ContentPart) -> Option<String> {
+        match part {
+            ContentPart::Text { text } | ContentPart::Reasoning { text } => Some(text.clone()),
+            ContentPart::ToolOutput { output, .. } | ContentPart::ToolCall { args: output, .. } => {
+                Some(output.to_string())
+            }
+            _ => None,
+        }
+    }
+
+    fn request_text(req: &CompletionRequest) -> String {
+        let mut text = Vec::new();
+        if !req.prompt.is_empty() {
+            text.push(req.prompt.clone());
+        }
+        text.extend(req.content.iter().filter_map(part_text));
+        for message in &req.chat_history {
+            text.extend(message.content.iter().filter_map(part_text));
+        }
+        text.join("\n")
     }
 
     fn test_db_config(name: &str) -> DBConfig {
@@ -1421,5 +1529,44 @@ mod tests {
 
         assert_eq!(conversation.status, ConversationStatus::Completed);
         assert!(conversation.messages.len() >= 2);
+    }
+
+    #[tokio::test]
+    async fn process_one_compacts_before_large_prompt_review_handoff() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let models = Models::default();
+        let mut model = Model::with_completer(Arc::new(CompactionCompleter {
+            requests: requests.clone(),
+        }));
+        model.context_window = 1000;
+        models.set_model(model);
+        let app = test_app_state_with_models("formation_compacts_before_review", Arc::new(models));
+        let space = create_loaded_space(&app, "formation_compacts_before_review").await;
+        let ctx = space
+            .ctx_for_test(SELF_USER_ID, FormationAgent::NAME)
+            .unwrap();
+        let large_text = "x".repeat(10_500);
+        let mut conversation = stored_conversation(
+            &space,
+            vec![json!(Message {
+                role: "user".to_string(),
+                content: vec![formation_prompt_with_text(&large_text, None).into()],
+                ..Default::default()
+            })],
+        )
+        .await;
+
+        space.formation.process_one(&ctx, &mut conversation).await;
+
+        assert_eq!(conversation.status, ConversationStatus::Completed);
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 3, "{requests:#?}");
+        assert!(requests[1].contains(COMPACTION_PROMPT.trim()));
+        assert!(requests[2].contains("handoff summary"));
+
+        let messages = serde_json::to_string(&conversation.messages).unwrap();
+        assert!(messages.contains("draft before compaction"));
+        assert!(messages.contains("handoff summary"));
+        assert!(messages.contains("reviewed after compaction"));
     }
 }

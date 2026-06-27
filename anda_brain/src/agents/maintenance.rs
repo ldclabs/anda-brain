@@ -20,7 +20,10 @@ use std::{
     },
 };
 
-use super::{BrainHook, SELF_USER_ID, push_completed_history};
+use super::{
+    BrainHook, SELF_USER_ID, append_runner_history, compact_runner_if_needed,
+    push_completed_history,
+};
 use crate::types::{MaintenanceAt, MaintenanceInput, MaintenanceScope};
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/BrainMaintenance.md");
@@ -317,31 +320,37 @@ impl MaintenanceAgent {
             vec![],
         );
 
-        let mut first_round = true;
+        let mut replace_initial_input = true;
+        let mut persisted_runner_history_len = 0;
         loop {
+            match compact_runner_if_needed(&mut runner, 0, true).await {
+                Ok(true) => {
+                    persisted_runner_history_len = 0;
+                    replace_initial_input = false;
+                }
+                Ok(false) => {}
+                Err(err) => {
+                    self.mark_conversation_failed(
+                        conversation,
+                        format!("CompletionRunner error: {err:?}"),
+                    )
+                    .await;
+                    break;
+                }
+            }
+
             match runner.next().await {
                 Ok(None) => break,
-                Ok(Some(mut res)) => {
+                Ok(Some(res)) => {
                     let now_ms = unix_ms();
                     let is_done = runner.is_done();
 
-                    if res.chat_history.is_empty() {
-                        // An anomalous round (e.g. cancelled before any output)
-                        // must not erase the original input from the record.
-                    } else if first_round {
-                        first_round = false;
-                        conversation.messages.clear();
-                        conversation.append_messages(res.chat_history);
-                    } else {
-                        let existing_len = conversation.messages.len();
-                        if res.chat_history.len() >= existing_len {
-                            res.chat_history.drain(0..existing_len);
-                            conversation.append_messages(res.chat_history);
-                        } else {
-                            conversation.messages.clear();
-                            conversation.append_messages(res.chat_history);
-                        }
-                    }
+                    append_runner_history(
+                        conversation,
+                        &res.chat_history,
+                        &mut persisted_runner_history_len,
+                        &mut replace_initial_input,
+                    );
 
                     conversation.status = if res.failed_reason.is_some() {
                         ConversationStatus::Failed

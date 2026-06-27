@@ -14,6 +14,9 @@ All notable changes to the Anda Brain project.
 - **Documentation and agent skill guidance now cover MCP integration.** English and Chinese READMEs, API docs, and SKILL files describe stdio and Streamable HTTP MCP setup plus the exposed memory tools.
 - **Dependencies updated for MCP support.** The workspace now depends on `rmcp` and `schemars`, and `object_store` was refreshed to the `0.14` line.
 
+### Fixed
+- **Memory agents compact long-running contexts before continuing.** Formation, Maintenance, and Recall now perform runner handoffs when context windows fill, preventing large review prompts or extended tool loops from overrunning model limits while preserving conversation progress.
+
 ## [0.8.1] — 2026-06-20
 
 ### Changed
