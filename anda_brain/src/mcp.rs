@@ -664,6 +664,8 @@ impl AndaBrainMcpServer {
     }
 
     /// Encode conversation messages into long-term structured memory.
+    /// Returns quickly after queuing asynchronous formation; use
+    /// anda_brain_get_formation_status or anda_brain_get_conversation to track processing.
     #[tool(
         name = "anda_brain_remember_conversation",
         annotations(
@@ -684,6 +686,8 @@ impl AndaBrainMcpServer {
     }
 
     /// Ask a natural-language question against long-term memory.
+    /// This is a synchronous recall run and can take over 60 seconds for complex searches;
+    /// wait for the tool result instead of assuming it is background work.
     #[tool(
         name = "anda_brain_recall_memory",
         annotations(
@@ -704,6 +708,8 @@ impl AndaBrainMcpServer {
     }
 
     /// Trigger a memory maintenance cycle for consolidation, pruning, and graph health.
+    /// Returns quickly after starting asynchronous maintenance; use
+    /// anda_brain_get_formation_status or anda_brain_get_conversation to track progress.
     #[tool(
         name = "anda_brain_run_maintenance",
         annotations(
@@ -1160,6 +1166,12 @@ mod tests {
                 .as_deref()
                 .is_some_and(|description| description.contains("Ask a natural-language question"))
         );
+        assert!(
+            recall
+                .description
+                .as_deref()
+                .is_some_and(|description| description.contains("can take over 60 seconds"))
+        );
         let recall_schema = Value::Object(recall.input_schema.as_ref().clone());
         let recall_properties = recall_schema["properties"].as_object().unwrap();
         assert_eq!(recall_properties["query"]["type"].as_str(), Some("string"));
@@ -1186,6 +1198,12 @@ mod tests {
                 .as_deref()
                 .is_some_and(|description| description.contains("Encode conversation messages"))
         );
+        assert!(
+            remember
+                .description
+                .as_deref()
+                .is_some_and(|description| description.contains("queuing asynchronous formation"))
+        );
         let remember_schema = Value::Object(remember.input_schema.as_ref().clone());
         let remember_properties = remember_schema["properties"].as_object().unwrap();
         assert!(remember_properties.contains_key("messages"));
@@ -1199,6 +1217,17 @@ mod tests {
         assert_eq!(
             remember.annotations.as_ref().unwrap().read_only_hint,
             Some(false)
+        );
+
+        let maintenance = tools
+            .iter()
+            .find(|tool| tool.name == "anda_brain_run_maintenance")
+            .unwrap();
+        assert!(
+            maintenance
+                .description
+                .as_deref()
+                .is_some_and(|description| description.contains("asynchronous maintenance"))
         );
 
         let info = tools

@@ -1,11 +1,12 @@
 use anda_cognitive_nexus::ConceptPK;
 use anda_core::{
     Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, Document, Documents,
-    FunctionDefinition, Json, Message, Resource, StateFeatures, Tool, ToolOutput, estimate_tokens,
+    FunctionDefinition, Json, Message, ModelEffort, Resource, StateFeatures, Tool, ToolOutput,
+    estimate_tokens,
 };
 use anda_engine::{
     context::{AgentCtx, BaseCtx},
-    extension::note::{NoteTool, load_notes, load_notes_from_legacy},
+    extension::note::{load_notes, load_notes_from_legacy},
     local_date_hour,
     memory::{
         Conversation, ConversationRef, ConversationStatus, Conversations, MemoryManagement,
@@ -31,8 +32,18 @@ use super::{
 use crate::types::RecallInput;
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/BrainRecall.md");
-const RECALL_CONTEXT_TIMEOUT: Duration = Duration::from_secs(2);
+const RECALL_CONTEXT_TIMEOUT: Duration = Duration::from_secs(5);
+const RECALL_TOTAL_TIMEOUT: Duration = Duration::from_secs(180);
+const RECALL_PRIMER_CACHE_TTL_MS: u64 = 300_000;
+const RECALL_MAX_MODEL_TURNS: usize = 7;
+const RECALL_HISTORY_LIMIT: usize = 1;
 pub const READONLY_KIP_TIMEOUT: Duration = Duration::from_secs(15);
+
+#[derive(Clone)]
+struct CachedPrimer {
+    value: Json,
+    fetched_at: u64,
+}
 
 pub static FUNCTION_DEFINITION: LazyLock<FunctionDefinition> = LazyLock::new(|| {
     serde_json::from_value(json!({
@@ -176,6 +187,7 @@ pub struct RecallAgent {
     memory: Arc<MemoryManagement>,
     hook: Arc<dyn BrainHook>,
     history: Arc<RwLock<VecDeque<Document>>>,
+    primer_cache: Arc<RwLock<Option<CachedPrimer>>>,
     max_input_tokens: usize,
 }
 
@@ -192,6 +204,7 @@ impl RecallAgent {
             memory,
             hook,
             history: Arc::new(RwLock::new(VecDeque::new())),
+            primer_cache: Arc::new(RwLock::new(None)),
             max_input_tokens,
         }
     }
@@ -205,12 +218,13 @@ impl RecallAgent {
         // the runtime push_completed_history behavior. The list is newest
         // first while the runtime queue runs oldest -> newest, so reverse it;
         // otherwise the next push_back would evict the newest entry first.
-        *self.history.write() = conversations
+        let mut history: Vec<Conversation> = conversations
             .into_iter()
             .filter(|c| c.status == ConversationStatus::Completed)
-            .rev()
-            .map(Document::from)
+            .take(RECALL_HISTORY_LIMIT)
             .collect();
+        history.reverse();
+        *self.history.write() = history.into_iter().map(Document::from).collect();
         Ok(())
     }
 
@@ -226,6 +240,102 @@ impl RecallAgent {
 
         Ok(user.to_concept_node())
     }
+
+    async fn get_counterparty_with_timeout(&self, counterparty: Option<String>) -> Option<Json> {
+        let counterparty = counterparty?;
+
+        match timeout(RECALL_CONTEXT_TIMEOUT, self.get_counterparty(&counterparty)).await {
+            Ok(Ok(info)) => Some(info),
+            Ok(Err(err)) => {
+                log::debug!(
+                    target: "brain",
+                    counterparty;
+                    "recall counterparty profile not available: {err:?}"
+                );
+                None
+            }
+            Err(_) => {
+                log::warn!(
+                    target: "brain",
+                    counterparty;
+                    "recall counterparty profile lookup timed out"
+                );
+                None
+            }
+        }
+    }
+
+    async fn describe_primer_cached(&self) -> Json {
+        let now = unix_ms();
+        if let Some(cached) = self.primer_cache.read().as_ref()
+            && now.saturating_sub(cached.fetched_at) <= RECALL_PRIMER_CACHE_TTL_MS
+        {
+            return cached.value.clone();
+        }
+
+        let primer = match timeout(RECALL_CONTEXT_TIMEOUT, self.memory.describe_primer()).await {
+            Ok(Ok(primer)) => primer,
+            Ok(Err(err)) => {
+                log::warn!(target: "brain", "recall primer not available: {err:?}");
+                return Json::default();
+            }
+            Err(_) => {
+                log::warn!(target: "brain", "recall primer lookup timed out");
+                return Json::default();
+            }
+        };
+
+        *self.primer_cache.write() = Some(CachedPrimer {
+            value: primer.clone(),
+            fetched_at: unix_ms(),
+        });
+        primer
+    }
+
+    async fn load_recall_notes(ctx: &AgentCtx) -> Json {
+        let notes = match load_notes(ctx).await {
+            Some(n) => n,
+            None => load_notes_from_legacy(ctx).await.unwrap_or_default(),
+        };
+        serde_json::to_value(notes.items).unwrap_or_default()
+    }
+
+    async fn persist_conversation(&self, conversation: &Conversation) {
+        if let Ok(changes) = conversation.to_changes() {
+            let _ = self
+                .conversations
+                .update_conversation(conversation._id, changes)
+                .await;
+        }
+    }
+
+    async fn failed_output(
+        &self,
+        mut conversation: Conversation,
+        reason: String,
+        last_output: Option<AgentOutput>,
+    ) -> AgentOutput {
+        conversation.status = ConversationStatus::Failed;
+        conversation.failed_reason = Some(reason.clone());
+        conversation.updated_at = unix_ms();
+        self.persist_conversation(&conversation).await;
+        self.hook
+            .on_conversation_end(Self::NAME, &conversation)
+            .await;
+
+        log::warn!(target: "brain", "recall failed: {reason}");
+
+        let mut output = last_output.unwrap_or_default();
+        output.conversation = Some(conversation._id);
+        let doc = Document::from(conversation.clone());
+        output.failed_reason = Some(format!("{reason}\n\n{doc}"));
+        output
+    }
+}
+
+fn recall_time_remaining(started_at: u64) -> Option<Duration> {
+    let elapsed = Duration::from_millis(unix_ms().saturating_sub(started_at));
+    RECALL_TOTAL_TIMEOUT.checked_sub(elapsed)
 }
 
 /// Implementation of the [`Agent`] trait for RecallAgent.
@@ -246,7 +356,7 @@ impl Agent<AgentCtx> for RecallAgent {
 
     /// Returns a list of tool names that this agent depends on
     fn tool_dependencies(&self) -> Vec<String> {
-        vec![MemoryReadonly::NAME.to_string(), NoteTool::NAME.to_string()]
+        vec![MemoryReadonly::NAME.to_string()]
     }
 
     async fn run(
@@ -266,69 +376,7 @@ impl Agent<AgentCtx> for RecallAgent {
             .into());
         }
 
-        let counterparty = if let Ok(input) = serde_json::from_str::<RecallInput>(&prompt)
-            && let Some(ctx) = input.context
-            && let Some(counterparty) = ctx.counterparty
-        {
-            Some(counterparty)
-        } else {
-            None
-        };
-
-        let counterparty_info = if let Some(counterparty) = counterparty {
-            match timeout(RECALL_CONTEXT_TIMEOUT, self.get_counterparty(&counterparty)).await {
-                Ok(Ok(info)) => Some(info),
-                Ok(Err(err)) => {
-                    log::debug!(
-                        target: "brain",
-                        counterparty;
-                        "recall counterparty profile not available: {err:?}"
-                    );
-                    None
-                }
-                Err(_) => {
-                    log::warn!(
-                        target: "brain",
-                        counterparty;
-                        "recall counterparty profile lookup timed out"
-                    );
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        // add history conversations to provide more context for recall
-        let chat_history: Vec<Document> = { self.history.read().iter().cloned().collect() };
-
-        let chat_history = if chat_history.is_empty() {
-            vec![]
-        } else {
-            vec![Message {
-                role: "user".into(),
-                content: vec![
-                    Documents::new("history_recall".to_string(), chat_history)
-                        .to_string()
-                        .into(),
-                ],
-                name: Some("$system".into()),
-                timestamp: Some(now_ms),
-                ..Default::default()
-            }]
-        };
-
-        let primer = match timeout(RECALL_CONTEXT_TIMEOUT, self.memory.describe_primer()).await {
-            Ok(Ok(primer)) => primer,
-            Ok(Err(err)) => {
-                log::debug!(target: "brain", "recall primer not available: {err:?}");
-                Json::default()
-            }
-            Err(_) => {
-                log::warn!(target: "brain", "recall primer lookup timed out");
-                Json::default()
-            }
-        };
+        let parsed_input = serde_json::from_str::<RecallInput>(&prompt).ok();
         let mut conversation = Conversation {
             user: *caller,
             messages: vec![serde_json::json!(Message {
@@ -350,17 +398,45 @@ impl Agent<AgentCtx> for RecallAgent {
             .add_conversation(ConversationRef::from(&conversation))
             .await?;
         conversation._id = id;
-        let notes = match load_notes(&ctx).await {
-            Some(n) => n,
-            None => load_notes_from_legacy(&ctx).await.unwrap_or_default(),
+
+        let counterparty = parsed_input
+            .as_ref()
+            .and_then(|input| input.context.as_ref())
+            .and_then(|ctx| ctx.counterparty.clone());
+
+        let (counterparty_info, primer, notes) = tokio::join!(
+            self.get_counterparty_with_timeout(counterparty),
+            self.describe_primer_cached(),
+            Self::load_recall_notes(&ctx),
+        );
+
+        // add bounded history conversations to provide context without bloating
+        // every recall request.
+        let chat_history: Vec<Document> = { self.history.read().iter().cloned().collect() };
+
+        let chat_history = if chat_history.is_empty() {
+            vec![]
+        } else {
+            vec![Message {
+                role: "user".into(),
+                content: vec![
+                    Documents::new("history_recall".to_string(), chat_history)
+                        .to_string()
+                        .into(),
+                ],
+                name: Some("$system".into()),
+                timestamp: Some(now_ms),
+                ..Default::default()
+            }]
         };
+
         let mut runner = ctx.clone().completion_iter(
             CompletionRequest {
                 instructions: format!(
                     "{}\n\n---\n\n# `DESCRIBE PRIMER` Result:\n{}\n\n---\n\n# Your Notes:\n{}\n\n# Counterparty profile:\n{}\n\n# Current Datetime: {}",
                     SELF_INSTRUCTIONS,
                     primer,
-                    serde_json::to_string(&notes.items).unwrap_or_default(),
+                    serde_json::to_string(&notes).unwrap_or_default(),
                     serde_json::to_string(&counterparty_info).unwrap_or_default(),
                     local_date_hour(now_ms).unwrap_or_default()
                 ),
@@ -368,22 +444,51 @@ impl Agent<AgentCtx> for RecallAgent {
                 chat_history,
                 tools: ctx.tool_definitions(Some(&self.tool_dependencies())),
                 tool_choice_required: true,
+                effort: Some(ModelEffort::Low),
                 ..Default::default()
             },
             vec![],
         );
 
+        let started_at = now_ms;
         let mut replace_initial_input = true;
         let mut persisted_runner_history_len = 0;
         let mut last_output: Option<AgentOutput> = None;
+        let mut total_model_turns = 0usize;
+        let mut accounted_runner_turns = 0usize;
         loop {
-            match compact_runner_if_needed(&mut runner, 0, true).await {
-                Ok(true) => {
+            if total_model_turns >= RECALL_MAX_MODEL_TURNS {
+                let reason = format!(
+                    "recall exceeded model turn limit of {}",
+                    RECALL_MAX_MODEL_TURNS
+                );
+                return Ok(self.failed_output(conversation, reason, last_output).await);
+            }
+
+            let Some(remaining) = recall_time_remaining(started_at) else {
+                let reason = format!(
+                    "recall timed out after {} seconds",
+                    RECALL_TOTAL_TIMEOUT.as_secs()
+                );
+                return Ok(self.failed_output(conversation, reason, last_output).await);
+            };
+
+            match timeout(remaining, compact_runner_if_needed(&mut runner, 0, true)).await {
+                Ok(Ok(true)) => {
+                    total_model_turns = total_model_turns.saturating_add(1);
+                    accounted_runner_turns = runner.turns();
                     persisted_runner_history_len = 0;
                     replace_initial_input = false;
+                    if total_model_turns >= RECALL_MAX_MODEL_TURNS {
+                        let reason = format!(
+                            "recall exceeded model turn limit of {}",
+                            RECALL_MAX_MODEL_TURNS
+                        );
+                        return Ok(self.failed_output(conversation, reason, last_output).await);
+                    }
                 }
-                Ok(false) => {}
-                Err(err) => {
+                Ok(Ok(false)) => {}
+                Ok(Err(err)) => {
                     conversation.status = ConversationStatus::Failed;
                     conversation.failed_reason = Some(err.to_string());
                     conversation.updated_at = unix_ms();
@@ -398,11 +503,38 @@ impl Agent<AgentCtx> for RecallAgent {
                         .await;
                     return Err(err);
                 }
+                Err(_) => {
+                    let reason = format!(
+                        "recall timed out after {} seconds",
+                        RECALL_TOTAL_TIMEOUT.as_secs()
+                    );
+                    return Ok(self.failed_output(conversation, reason, last_output).await);
+                }
             }
 
-            match runner.next().await {
-                Ok(None) => break,
-                Ok(Some(mut output)) => {
+            let Some(remaining) = recall_time_remaining(started_at) else {
+                let reason = format!(
+                    "recall timed out after {} seconds",
+                    RECALL_TOTAL_TIMEOUT.as_secs()
+                );
+                return Ok(self.failed_output(conversation, reason, last_output).await);
+            };
+
+            match timeout(remaining, runner.next()).await {
+                Err(_) => {
+                    let reason = format!(
+                        "recall timed out after {} seconds",
+                        RECALL_TOTAL_TIMEOUT.as_secs()
+                    );
+                    return Ok(self.failed_output(conversation, reason, last_output).await);
+                }
+                Ok(Ok(None)) => break,
+                Ok(Ok(Some(mut output))) => {
+                    let runner_turns = runner.turns();
+                    total_model_turns = total_model_turns
+                        .saturating_add(runner_turns.saturating_sub(accounted_runner_turns));
+                    accounted_runner_turns = runner_turns;
+
                     let is_done = runner.is_done();
                     append_runner_history(
                         &mut conversation,
@@ -424,15 +556,10 @@ impl Agent<AgentCtx> for RecallAgent {
                         conversation.failed_reason = Some(failed_reason.clone());
                     } else {
                         conversation.failed_reason = None;
-                        push_completed_history(&self.history, &conversation, 3);
+                        push_completed_history(&self.history, &conversation, RECALL_HISTORY_LIMIT);
                     }
 
-                    if let Ok(changes) = conversation.to_changes() {
-                        let _ = self
-                            .conversations
-                            .update_conversation(conversation._id, changes)
-                            .await;
-                    }
+                    self.persist_conversation(&conversation).await;
                     output.conversation = Some(conversation._id);
                     last_output = Some(output);
 
@@ -442,16 +569,11 @@ impl Agent<AgentCtx> for RecallAgent {
                         break;
                     }
                 }
-                Err(err) => {
+                Ok(Err(err)) => {
                     conversation.status = ConversationStatus::Failed;
                     conversation.failed_reason = Some(err.to_string());
                     conversation.updated_at = unix_ms();
-                    if let Ok(changes) = conversation.to_changes() {
-                        let _ = self
-                            .conversations
-                            .update_conversation(conversation._id, changes)
-                            .await;
-                    }
+                    self.persist_conversation(&conversation).await;
                     self.hook
                         .on_conversation_end(Self::NAME, &conversation)
                         .await;
@@ -476,7 +598,8 @@ mod tests {
         types::{InputContext, RecallInput},
     };
     use anda_core::{
-        Agent, AgentOutput, BoxError, BoxPinFut, CompletionRequest, Message, Principal,
+        Agent, AgentOutput, BoxError, BoxPinFut, CompletionRequest, Message, Principal, ToolCall,
+        Usage,
     };
     use anda_db::{database::DBConfig, storage::StorageConfig};
     use anda_engine::{
@@ -565,6 +688,46 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct CompactingToolLoopCompleter;
+
+    impl CompletionFeaturesDyn for CompactingToolLoopCompleter {
+        fn model_name(&self) -> String {
+            "recall-compacting-tool-loop-test-model".to_string()
+        }
+
+        fn completion(&self, req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            Box::pin(async move {
+                let usage = Usage {
+                    input_tokens: 100_000,
+                    output_tokens: 1,
+                    cached_tokens: 0,
+                    requests: 1,
+                };
+
+                if req.tools.is_empty() {
+                    return Ok(AgentOutput {
+                        content: "compacted recall handoff".to_string(),
+                        usage,
+                        ..Default::default()
+                    });
+                }
+
+                Ok(AgentOutput {
+                    tool_calls: vec![ToolCall {
+                        name: "execute_kip_readonly".to_string(),
+                        args: serde_json::json!({"commands": []}),
+                        result: None,
+                        call_id: Some("loop".to_string()),
+                        remote_id: None,
+                    }],
+                    usage,
+                    ..Default::default()
+                })
+            })
+        }
+    }
+
     fn test_db_config(name: &str) -> DBConfig {
         DBConfig {
             name: name.to_string(),
@@ -578,8 +741,22 @@ mod tests {
     where
         C: CompletionFeaturesDyn,
     {
+        test_app_state_with_configured_completer(name, completer, |_| {})
+    }
+
+    fn test_app_state_with_configured_completer<C, F>(
+        name: &str,
+        completer: C,
+        configure: F,
+    ) -> AppState
+    where
+        C: CompletionFeaturesDyn,
+        F: FnOnce(&mut Model),
+    {
         let models = Models::default();
-        models.set_model(Model::with_completer(Arc::new(completer)));
+        let mut model = Model::with_completer(Arc::new(completer));
+        configure(&mut model);
+        models.set_model(model);
         let management = Arc::new(BaseManagement {
             controller: SELF_USER_ID,
             managers: BTreeSet::new(),
@@ -670,8 +847,7 @@ mod tests {
             RecallAgent::NAME
         );
         let tools = Agent::<AgentCtx>::tool_dependencies(space.recall.as_ref());
-        assert!(tools.iter().any(|name| name == "execute_kip_readonly"));
-        assert!(tools.iter().any(|name| name == "note"));
+        assert_eq!(tools, vec!["execute_kip_readonly".to_string()]);
     }
 
     #[tokio::test]
@@ -792,5 +968,40 @@ mod tests {
 
         assert!(err.to_string().contains("Input too large"));
         assert_eq!(space.recall.conversations.conversations.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn recall_run_enforces_total_model_turn_limit_across_compaction() {
+        let app = test_app_state_with_configured_completer(
+            "recall_total_turn_limit",
+            CompactingToolLoopCompleter,
+            |model| {
+                model.context_window = 1;
+            },
+        );
+        let space = create_loaded_space(&app, "recall_total_turn_limit").await;
+        let ctx = space.ctx_for_test(SELF_USER_ID, RecallAgent::NAME).unwrap();
+
+        let output = Agent::<AgentCtx>::run(
+            space.recall.as_ref(),
+            ctx,
+            recall_prompt("loop until the guardrail stops it", None),
+            vec![],
+        )
+        .await
+        .unwrap();
+
+        let failed_reason = output.failed_reason.as_deref().unwrap_or_default();
+        assert!(failed_reason.contains("recall exceeded model turn limit of 7"));
+
+        let stored = space
+            .get_conversation(Some("recall".to_string()), output.conversation.unwrap())
+            .await
+            .unwrap();
+        assert_eq!(stored.status, ConversationStatus::Failed);
+        assert_eq!(
+            stored.failed_reason.as_deref(),
+            Some("recall exceeded model turn limit of 7")
+        );
     }
 }

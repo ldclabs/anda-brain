@@ -2,6 +2,15 @@
 
 All notable changes to the Anda Brain project.
 
+## [0.9.1] — 2026-06-27
+
+### Changed
+- **Release version advanced to `0.9.1`.** `anda_brain` now reports `0.9.1`, and the lockfile was refreshed for the release.
+- **Recall requests now use a leaner bounded runtime context.** Brain Recall limits carried history to the latest completed conversation, caches primer context briefly, loads counterparty/profile data concurrently, and no longer exposes the notes tool as a model dependency while still injecting notes into the prompt.
+
+### Fixed
+- **Recall execution now has explicit time and turn guardrails.** Recall runs enforce a total timeout and model turn limit, persist failed conversations consistently, and return the last available output with failure details when guardrails trip.
+
 ## [0.9.0] — 2026-06-27
 
 ### Added
