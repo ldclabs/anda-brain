@@ -2,6 +2,12 @@
 
 All notable changes to the Anda Brain project.
 
+## [0.9.2] — 2026-06-28
+
+### Changed
+- **Release version advanced to `0.9.2`.** `anda_brain` now reports `0.9.2`, and the lockfile was refreshed for the release.
+- **Recall requests now use medium model effort.** Brain Recall raises its model effort from low to medium to improve answer quality while keeping the bounded runtime guardrails introduced in `0.9.1`.
+
 ## [0.9.1] — 2026-06-27
 
 ### Changed

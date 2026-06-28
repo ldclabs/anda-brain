@@ -444,7 +444,7 @@ impl Agent<AgentCtx> for RecallAgent {
                 chat_history,
                 tools: ctx.tool_definitions(Some(&self.tool_dependencies())),
                 tool_choice_required: true,
-                effort: Some(ModelEffort::Low),
+                effort: Some(ModelEffort::Medium),
                 ..Default::default()
             },
             vec![],
