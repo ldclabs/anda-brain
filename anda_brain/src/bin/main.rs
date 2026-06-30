@@ -1,4 +1,4 @@
-use anda_core::{BoxError, ModelEffort, Principal};
+use anda_core::{BoxError, ModelEffort, Principal, Usage};
 use anda_db::{database::DBConfig, storage::StorageConfig};
 use anda_engine::{
     management::{BaseManagement, Visibility},
@@ -14,7 +14,9 @@ use object_store::{
     local::LocalFileSystem,
     memory::InMemory,
 };
-use std::{collections::BTreeSet, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeSet, fmt::Write as _, net::SocketAddr, path::Path, sync::Arc, time::Duration,
+};
 use structured_logger::{Builder, async_json::new_writer, get_env_level};
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
@@ -25,6 +27,11 @@ use tower_http::{
 
 use anda_brain::{
     agents::SELF_USER_ID,
+    eval::{
+        EvalExperimentReport, EvalGate, EvalGateReport, EvalProfile, EvalReport, EvalScenario,
+        EvalScore, EvalSuiteReport, EvalValidationReport, EvalValidationSeverity, run_scenario,
+        validate_eval_plan,
+    },
     handler::*,
     mcp::{McpHttpServerConfig, McpServerConfig, build_streamable_http_service, run_stdio_server},
     parse_ed25519_pubkeys,
@@ -158,6 +165,58 @@ pub enum Commands {
             env = "MCP_AUTO_CREATE_TIER",
             default_value_t = 1
         )]
+        auto_create_tier: u32,
+
+        #[command(subcommand)]
+        storage: Option<StorageCommand>,
+    },
+    Eval {
+        /// Memory space used for this eval run
+        #[arg(long, env = "EVAL_SPACE_ID", default_value = "eval")]
+        space_id: String,
+
+        /// Path to an EvalScenario JSON file. Repeat to run a suite.
+        #[arg(long, env = "EVAL_SCENARIO", value_delimiter = ',', num_args = 1..)]
+        scenario: Vec<String>,
+
+        /// Optional path to an EvalProfile JSON file. Repeat to compare profiles.
+        #[arg(long, env = "EVAL_PROFILE", value_delimiter = ',', num_args = 1..)]
+        profile: Vec<String>,
+
+        /// Optional path to write the EvalReport JSON. Defaults to stdout.
+        #[arg(long, env = "EVAL_OUTPUT")]
+        output: Option<String>,
+
+        /// Fail the command if the aggregate total score is below this value
+        #[arg(long = "min-score", env = "EVAL_MIN_SCORE")]
+        min_score: Option<f64>,
+
+        /// Fail the command if aggregate failure attribution exceeds this count
+        #[arg(long = "max-findings", env = "EVAL_MAX_FINDINGS")]
+        max_findings: Option<u64>,
+
+        /// Validate scenario/profile inputs and print the planned eval without running models
+        #[arg(
+            long = "validate-only",
+            env = "EVAL_VALIDATE_ONLY",
+            default_value_t = false
+        )]
+        validate_only: bool,
+
+        /// Print a compact human-readable summary instead of JSON
+        #[arg(
+            long = "summary-only",
+            env = "EVAL_SUMMARY_ONLY",
+            default_value_t = false
+        )]
+        summary_only: bool,
+
+        /// Create the eval space before running if needed
+        #[arg(long, env = "EVAL_AUTO_CREATE_SPACE", default_value_t = true)]
+        auto_create_space: bool,
+
+        /// Tier used when --auto-create-space creates the eval memory space
+        #[arg(long, env = "EVAL_AUTO_CREATE_TIER", default_value_t = 1)]
         auto_create_tier: u32,
 
         #[command(subcommand)]
@@ -412,6 +471,7 @@ fn object_store_from_command(
         Some(Commands::Local { db }) => Some(StorageCommand::Local { db }),
         Some(Commands::Aws { bucket, region }) => Some(StorageCommand::Aws { bucket, region }),
         Some(Commands::Mcp { storage, .. }) => storage,
+        Some(Commands::Eval { storage, .. }) => storage,
         None => None,
     };
 
@@ -545,6 +605,498 @@ async fn run_service(
     Ok(())
 }
 
+struct NamedEvalProfile {
+    id: String,
+    profile: EvalProfile,
+}
+
+struct EvalCommandConfig {
+    space_id: String,
+    scenario_paths: Vec<String>,
+    profile_paths: Vec<String>,
+    output_path: Option<String>,
+    gate: EvalGate,
+    validate_only: bool,
+    summary_only: bool,
+    auto_create_space: bool,
+    auto_create_tier: u32,
+}
+
+enum EvalCommandReport {
+    Scenario(EvalReport),
+    Suite(EvalSuiteReport),
+    Experiment(EvalExperimentReport),
+}
+
+impl EvalCommandReport {
+    fn evaluate_gate(&self, gate: &EvalGate) -> EvalGateReport {
+        match self {
+            Self::Scenario(report) => gate.evaluate(&report.score, &report.attribution),
+            Self::Suite(report) => gate.evaluate(&report.score, &report.attribution),
+            Self::Experiment(report) => gate.evaluate(&report.score, &report.attribution),
+        }
+    }
+
+    fn attach_gate_report(&mut self, gate_report: EvalGateReport) {
+        match self {
+            Self::Scenario(report) => report.gate = Some(gate_report),
+            Self::Suite(report) => report.gate = Some(gate_report),
+            Self::Experiment(report) => report.gate = Some(gate_report),
+        }
+    }
+
+    fn to_pretty_json(&self) -> Result<String, serde_json::Error> {
+        match self {
+            Self::Scenario(report) => serde_json::to_string_pretty(report),
+            Self::Suite(report) => serde_json::to_string_pretty(report),
+            Self::Experiment(report) => serde_json::to_string_pretty(report),
+        }
+    }
+
+    fn to_summary(&self, gate_report: Option<&EvalGateReport>) -> String {
+        let mut out = String::new();
+        match self {
+            Self::Scenario(report) => {
+                writeln!(out, "Eval scenario {}", report.scenario_id).ok();
+                append_score_summary(&mut out, &report.score);
+                append_attribution_summary(&mut out, &report.attribution);
+                append_usage_summary(&mut out, &report.usage);
+                writeln!(out, "turns: {}", report.turns.len()).ok();
+            }
+            Self::Suite(report) => {
+                writeln!(out, "Eval suite {}", report.suite_id).ok();
+                append_score_summary(&mut out, &report.score);
+                append_attribution_summary(&mut out, &report.attribution);
+                append_usage_summary(&mut out, &report.usage);
+                writeln!(out, "scenarios: {}", report.reports.len()).ok();
+                for scenario in &report.reports {
+                    writeln!(
+                        out,
+                        "- {} total={:.4} findings={}",
+                        scenario.scenario_id,
+                        scenario.score.total,
+                        scenario.attribution.total_findings()
+                    )
+                    .ok();
+                }
+            }
+            Self::Experiment(report) => {
+                writeln!(out, "Eval experiment {}", report.experiment_id).ok();
+                append_score_summary(&mut out, &report.score);
+                append_attribution_summary(&mut out, &report.attribution);
+                append_usage_summary(&mut out, &report.usage);
+                if let Some(best_suite_id) = &report.best_suite_id {
+                    writeln!(out, "best_suite: {best_suite_id}").ok();
+                }
+                writeln!(out, "suites: {}", report.suites.len()).ok();
+                for comparison in &report.comparisons {
+                    writeln!(
+                        out,
+                        "- #{} {} total={:.4} delta={:.4} findings={} tokens={}",
+                        comparison.rank,
+                        comparison.suite_id,
+                        comparison.score.total,
+                        comparison.delta_from_best_total,
+                        comparison.total_findings,
+                        comparison.total_tokens
+                    )
+                    .ok();
+                }
+            }
+        }
+
+        if let Some(gate_report) = gate_report {
+            append_gate_summary(&mut out, gate_report);
+        }
+        out
+    }
+}
+
+async fn run_eval_command(cli: &Cli, config: EvalCommandConfig) -> Result<(), BoxError> {
+    let EvalCommandConfig {
+        space_id,
+        scenario_paths,
+        profile_paths,
+        output_path,
+        gate,
+        validate_only,
+        summary_only,
+        auto_create_space,
+        auto_create_tier,
+    } = config;
+
+    if scenario_paths.is_empty() {
+        return Err("at least one --scenario is required".into());
+    }
+
+    let scenarios: Vec<EvalScenario> = scenario_paths
+        .iter()
+        .map(|path| read_json_file::<EvalScenario>(path))
+        .collect::<Result<_, _>>()?;
+    let profiles = read_eval_profiles(&profile_paths)?;
+    let profile_values: Vec<EvalProfile> = profiles
+        .iter()
+        .map(|profile| profile.profile.clone())
+        .collect();
+    let validation = validate_eval_plan(&scenarios, &profile_values);
+
+    if validate_only {
+        let report = if summary_only {
+            validation_summary(&validation)
+        } else {
+            serde_json::to_string_pretty(&validation)?
+        };
+        match output_path {
+            Some(path) => std::fs::write(path, report)?,
+            None => println!("{report}"),
+        }
+
+        if !validation.passed {
+            return Err(eval_validation_error(&validation).into());
+        }
+
+        return Ok(());
+    }
+
+    if !validation.passed {
+        return Err(eval_validation_error(&validation).into());
+    }
+
+    let (app_state, _) = build_app_state(cli)?;
+
+    let mut report = if scenarios.len() == 1 && profiles.len() == 1 {
+        let space =
+            load_eval_space(&app_state, &space_id, auto_create_space, auto_create_tier).await?;
+        let report = run_scenario(space.as_ref(), &scenarios[0], &profiles[0].profile).await?;
+        space.db.close().await?;
+        EvalCommandReport::Scenario(report)
+    } else if profiles.len() == 1 {
+        let run_id = anda_engine::unix_ms();
+        let suite = run_eval_suite(
+            &app_state,
+            &space_id,
+            &profiles[0],
+            &scenarios,
+            auto_create_space,
+            auto_create_tier,
+            run_id,
+        )
+        .await?;
+        EvalCommandReport::Suite(suite)
+    } else {
+        let run_id = anda_engine::unix_ms();
+        let mut suites = Vec::with_capacity(profiles.len());
+        for profile in &profiles {
+            let suite = run_eval_suite(
+                &app_state,
+                &space_id,
+                profile,
+                &scenarios,
+                auto_create_space,
+                auto_create_tier,
+                run_id,
+            )
+            .await?;
+            suites.push(suite);
+        }
+        let experiment = EvalExperimentReport::from_suites(space_id, suites);
+        EvalCommandReport::Experiment(experiment)
+    };
+
+    let gate_report = report.evaluate_gate(&gate);
+    if gate.is_configured() {
+        report.attach_gate_report(gate_report.clone());
+    }
+    let report_output = if summary_only {
+        report.to_summary(gate.is_configured().then_some(&gate_report))
+    } else {
+        report.to_pretty_json()?
+    };
+
+    match output_path {
+        Some(path) => std::fs::write(path, report_output)?,
+        None => println!("{report_output}"),
+    }
+
+    if !gate_report.passed {
+        return Err(format!("eval gate failed: {}", gate_report.failures.join("; ")).into());
+    }
+
+    Ok(())
+}
+
+fn eval_validation_error(report: &EvalValidationReport) -> String {
+    let errors: Vec<String> = report
+        .issues
+        .iter()
+        .filter(|issue| issue.severity == anda_brain::eval::EvalValidationSeverity::Error)
+        .take(5)
+        .map(|issue| format!("{}: {}", issue.path, issue.message))
+        .collect();
+
+    if errors.is_empty() {
+        "eval validation failed".to_string()
+    } else {
+        format!("eval validation failed: {}", errors.join("; "))
+    }
+}
+
+fn validation_summary(report: &EvalValidationReport) -> String {
+    let mut out = String::new();
+    writeln!(
+        out,
+        "Eval validation {}",
+        if report.passed { "passed" } else { "failed" }
+    )
+    .ok();
+    writeln!(out, "planned_runs: {}", report.planned_runs).ok();
+    writeln!(out, "scenarios: {}", report.scenarios.len()).ok();
+    for scenario in &report.scenarios {
+        writeln!(
+            out,
+            "- {} normal={} checkpoint={} maintenance={} memories={} probes={}",
+            scenario.id,
+            scenario.normal_turns,
+            scenario.checkpoint_turns,
+            scenario.maintenance_turns,
+            scenario.expected_memories,
+            scenario.probes
+        )
+        .ok();
+    }
+    writeln!(out, "profiles: {}", report.profiles.len()).ok();
+    for profile in &report.profiles {
+        let cadence = profile
+            .maintenance_every_n_turns
+            .map(|turns| format!("every_{turns}_turns"))
+            .unwrap_or_else(|| "manual".to_string());
+        writeln!(
+            out,
+            "- {} maintenance={} scope={} timeout_ms={} poll_ms={}",
+            profile.id,
+            cadence,
+            profile.maintenance_scope,
+            profile.wait_timeout_ms,
+            profile.poll_interval_ms
+        )
+        .ok();
+    }
+    append_validation_issues_summary(&mut out, report);
+    out
+}
+
+fn append_validation_issues_summary(out: &mut String, report: &EvalValidationReport) {
+    let errors = report
+        .issues
+        .iter()
+        .filter(|issue| issue.severity == EvalValidationSeverity::Error)
+        .count();
+    let warnings = report.issues.len().saturating_sub(errors);
+    writeln!(out, "issues: errors={errors} warnings={warnings}").ok();
+    for issue in &report.issues {
+        writeln!(
+            out,
+            "- {:?} {}: {}",
+            issue.severity, issue.path, issue.message
+        )
+        .ok();
+    }
+}
+
+fn append_score_summary(out: &mut String, score: &EvalScore) {
+    writeln!(
+        out,
+        "score: total={:.4} memory={:.4} evolution={:.4} uncertainty={:.4} forgetting={:.4} graph={:.4} latency_penalty={:.4} token_penalty={:.4}",
+        score.total,
+        score.memory_utility,
+        score.evolution_quality,
+        score.uncertainty_calibration,
+        score.forgetting_quality,
+        score.graph_health,
+        score.latency_penalty,
+        score.token_cost_penalty
+    )
+    .ok();
+}
+
+fn append_attribution_summary(
+    out: &mut String,
+    attribution: &anda_brain::eval::AttributionSummary,
+) {
+    writeln!(
+        out,
+        "findings: total={} formation_miss={} bad_consolidation={} bad_grounding={} bad_synthesis={} overconfidence={} graph_probe_error={} latency_cost={} token_cost={}",
+        attribution.total_findings(),
+        attribution.formation_miss,
+        attribution.bad_consolidation,
+        attribution.bad_grounding,
+        attribution.bad_synthesis,
+        attribution.overconfidence,
+        attribution.graph_probe_error,
+        attribution.latency_cost,
+        attribution.token_cost
+    )
+    .ok();
+}
+
+fn append_usage_summary(out: &mut String, usage: &Usage) {
+    writeln!(
+        out,
+        "usage: input_tokens={} output_tokens={} cached_tokens={} requests={}",
+        usage.input_tokens, usage.output_tokens, usage.cached_tokens, usage.requests
+    )
+    .ok();
+}
+
+fn append_gate_summary(out: &mut String, gate_report: &EvalGateReport) {
+    writeln!(
+        out,
+        "gate: {} min_score={} max_findings={}",
+        if gate_report.passed {
+            "passed"
+        } else {
+            "failed"
+        },
+        gate_report
+            .criteria
+            .min_total_score
+            .map(|score| format!("{score:.4}"))
+            .unwrap_or_else(|| "none".to_string()),
+        gate_report
+            .criteria
+            .max_total_findings
+            .map(|findings| findings.to_string())
+            .unwrap_or_else(|| "none".to_string())
+    )
+    .ok();
+    for failure in &gate_report.failures {
+        writeln!(out, "- {failure}").ok();
+    }
+}
+
+async fn run_eval_suite(
+    app_state: &AppState,
+    base_space_id: &str,
+    profile: &NamedEvalProfile,
+    scenarios: &[EvalScenario],
+    auto_create_space: bool,
+    auto_create_tier: u32,
+    run_id: u64,
+) -> Result<EvalSuiteReport, BoxError> {
+    let mut reports = Vec::with_capacity(scenarios.len());
+    for scenario in scenarios {
+        let scenario_space_id = format!(
+            "{}_{}_{}_{}",
+            base_space_id,
+            sanitize_space_id_part(&profile.id),
+            sanitize_space_id_part(&scenario.id),
+            run_id
+        );
+        let space = load_eval_space(
+            app_state,
+            &scenario_space_id,
+            auto_create_space,
+            auto_create_tier,
+        )
+        .await?;
+        let report = run_scenario(space.as_ref(), scenario, &profile.profile).await?;
+        space.db.close().await?;
+        reports.push(report);
+    }
+
+    Ok(EvalSuiteReport::from_reports(profile.id.clone(), reports))
+}
+
+fn read_eval_profiles(paths: &[String]) -> Result<Vec<NamedEvalProfile>, BoxError> {
+    if paths.is_empty() {
+        let profile = EvalProfile {
+            id: Some("default".to_string()),
+            ..Default::default()
+        };
+        return Ok(vec![NamedEvalProfile {
+            id: "default".to_string(),
+            profile,
+        }]);
+    }
+
+    paths
+        .iter()
+        .map(|path| {
+            let mut profile = read_json_file::<EvalProfile>(path)?;
+            let id = profile
+                .id
+                .clone()
+                .unwrap_or_else(|| profile_id_from_path(path));
+            profile.id = Some(id.clone());
+            Ok(NamedEvalProfile { id, profile })
+        })
+        .collect()
+}
+
+async fn load_eval_space(
+    app_state: &AppState,
+    space_id: &str,
+    auto_create_space: bool,
+    auto_create_tier: u32,
+) -> Result<Arc<anda_brain::space::Space>, BoxError> {
+    if auto_create_space {
+        match app_state
+            .admin_create_space(
+                SELF_USER_ID,
+                SELF_USER_ID,
+                space_id.to_string(),
+                auto_create_tier,
+                anda_engine::unix_ms(),
+            )
+            .await
+        {
+            Ok(_) => {}
+            Err(err) => {
+                // Existing local eval spaces are valid; `load_space` below is
+                // the authority on whether this run can proceed.
+                log::debug!(target: "brain", space_id = space_id; "eval space create skipped: {err:?}");
+            }
+        }
+    }
+
+    app_state.load_space(space_id, true).await
+}
+
+fn profile_id_from_path(path: &str) -> String {
+    Path::new(path)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .map(sanitize_space_id_part)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "profile".to_string())
+}
+
+fn sanitize_space_id_part(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+
+    let out = out.trim_matches('_');
+    if out.is_empty() {
+        "scenario".to_string()
+    } else {
+        out.to_string()
+    }
+}
+
+fn read_json_file<T>(path: &str) -> Result<T, BoxError>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let data = std::fs::read(path)?;
+    Ok(serde_json::from_slice(&data)?)
+}
+
 /// ```bash
 /// cargo run -p anda_brain
 /// ```
@@ -554,9 +1106,12 @@ async fn main() -> Result<(), BoxError> {
     dotenv::dotenv().ok();
     let cli = Cli::parse();
 
-    if !matches!(cli.command, Some(Commands::Mcp { .. })) {
+    if !matches!(
+        cli.command,
+        Some(Commands::Mcp { .. } | Commands::Eval { .. })
+    ) {
         // Initialize structured logging with JSON format. MCP stdio keeps stdout reserved
-        // for JSON-RPC messages, so the MCP subcommand intentionally skips this logger.
+        // for JSON-RPC messages. Eval uses stdout for JSON reports when no output path is set.
         Builder::with_level(&get_env_level().to_string())
             .with_target_writer("*", new_writer(tokio::io::stdout()))
             .init();
@@ -578,6 +1133,38 @@ async fn main() -> Result<(), BoxError> {
             mcp_config.auto_create_space = auto_create_space;
             mcp_config.auto_create_tier = auto_create_tier;
             run_stdio_server(app_state, mcp_config).await
+        }
+        Some(Commands::Eval {
+            space_id,
+            scenario,
+            profile,
+            output,
+            min_score,
+            max_findings,
+            validate_only,
+            summary_only,
+            auto_create_space,
+            auto_create_tier,
+            ..
+        }) => {
+            run_eval_command(
+                &cli,
+                EvalCommandConfig {
+                    space_id,
+                    scenario_paths: scenario,
+                    profile_paths: profile,
+                    output_path: output,
+                    gate: EvalGate {
+                        min_total_score: min_score,
+                        max_total_findings: max_findings,
+                    },
+                    validate_only,
+                    summary_only,
+                    auto_create_space,
+                    auto_create_tier,
+                },
+            )
+            .await
         }
         _ => {
             let runtime = build_service_runtime(&cli, global_cancel_token.child_token())?;
@@ -635,14 +1222,17 @@ async fn create_reuse_port_listener(addr: SocketAddr) -> Result<tokio::net::TcpL
 #[cfg(test)]
 mod tests {
     use super::{
-        AnyHost, Cli, Commands, build_cors, build_http_client, build_router, build_service_runtime,
-        create_reuse_port_listener, default_db_config, mcp_http_config_from_cli,
-        model_config_from_cli, normalize_http_path_prefix, object_store_from_command,
-        parse_ed25519_pubkeys, parse_managers, run_service, split_csv_values,
+        AnyHost, Cli, Commands, EvalCommandConfig, EvalCommandReport, StorageCommand, build_cors,
+        build_http_client, build_router, build_service_runtime, create_reuse_port_listener,
+        default_db_config, mcp_http_config_from_cli, model_config_from_cli,
+        normalize_http_path_prefix, object_store_from_command, parse_ed25519_pubkeys,
+        parse_managers, read_json_file, run_eval_command, run_service, split_csv_values,
     };
     use anda_brain::agents::SELF_USER_ID;
+    use anda_brain::eval::{AttributionSummary, EvalGate, EvalReport, EvalScenario, EvalScore};
     use cose2::{Key as CoseKey, iana};
     use ic_auth_types::ByteBufB64;
+    use serde_json::Value;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::time::{Duration, sleep, timeout};
     use tokio_util::sync::CancellationToken;
@@ -785,6 +1375,24 @@ mod tests {
         .unwrap();
         assert_eq!(db_type, "local");
 
+        let (_, db_type) = object_store_from_command(Some(Commands::Eval {
+            space_id: "eval_space".to_string(),
+            scenario: vec!["scenario.json".to_string()],
+            profile: Vec::new(),
+            output: None,
+            min_score: None,
+            max_findings: None,
+            validate_only: false,
+            summary_only: false,
+            auto_create_space: true,
+            auto_create_tier: 1,
+            storage: Some(StorageCommand::Local {
+                db: path.to_string_lossy().to_string(),
+            }),
+        }))
+        .unwrap();
+        assert_eq!(db_type, "local");
+
         let aws = object_store_from_command(Some(Commands::Aws {
             bucket: "anda-brain-test-bucket".to_string(),
             region: "us-east-1".to_string(),
@@ -792,6 +1400,172 @@ mod tests {
         if let Ok((_, db_type)) = aws {
             assert_eq!(db_type, "aws");
         }
+    }
+
+    #[test]
+    fn read_json_file_loads_eval_scenario() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("anda-brain-eval-scenario-{suffix}.json"));
+        std::fs::write(
+            &path,
+            r#"{"id":"scenario","hidden_profile":{},"timeline":[]}"#,
+        )
+        .unwrap();
+
+        let scenario: EvalScenario = read_json_file(path.to_str().unwrap()).unwrap();
+
+        assert_eq!(scenario.id, "scenario");
+        assert!(scenario.timeline.is_empty());
+    }
+
+    #[test]
+    fn eval_command_report_serializes_gate_artifact() {
+        let gate = EvalGate {
+            min_total_score: Some(0.9),
+            max_total_findings: Some(0),
+        };
+        let mut command_report = EvalCommandReport::Scenario(EvalReport {
+            scenario_id: "scenario".to_string(),
+            score: EvalScore {
+                total: 0.5,
+                ..Default::default()
+            },
+            attribution: AttributionSummary {
+                bad_grounding: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let gate_report = command_report.evaluate_gate(&gate);
+
+        assert!(!gate_report.passed);
+        command_report.attach_gate_report(gate_report);
+        let json: Value = serde_json::from_str(&command_report.to_pretty_json().unwrap()).unwrap();
+
+        assert_eq!(json["gate"]["passed"], false);
+        assert_eq!(json["gate"]["criteria"]["min_total_score"], 0.9);
+        assert_eq!(json["gate"]["criteria"]["max_total_findings"], 0);
+        assert_eq!(json["gate"]["failures"].as_array().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn eval_validate_only_writes_validation_report_without_running_models() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("anda-brain-eval-validate-{suffix}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let scenario_path = dir.join("scenario.json");
+        let profile_path = dir.join("profile.json");
+        let output_path = dir.join("validation.json");
+        std::fs::write(
+            &scenario_path,
+            r#"{
+              "id": "invalid",
+              "hidden_profile": {},
+              "timeline": [{
+                "turn": 1,
+                "type": "checkpoint_synthetic",
+                "query": "What do I prefer?",
+                "evaluation": {
+                  "expected_memories": [{
+                    "id": "pref",
+                    "probe": {
+                      "command": "SEARCH CONCEPT \"preference\" MODE \"semantic\" LIMIT 1"
+                    }
+                  }]
+                }
+              }]
+            }"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &profile_path,
+            r#"{"id":"bad_profile","maintenance_every_n_turns":0}"#,
+        )
+        .unwrap();
+
+        let mut cli = test_cli();
+        cli.model_api_key = String::new();
+        let result = run_eval_command(
+            &cli,
+            EvalCommandConfig {
+                space_id: "validate".to_string(),
+                scenario_paths: vec![scenario_path.to_string_lossy().to_string()],
+                profile_paths: vec![profile_path.to_string_lossy().to_string()],
+                output_path: Some(output_path.to_string_lossy().to_string()),
+                gate: EvalGate::default(),
+                validate_only: true,
+                summary_only: false,
+                auto_create_space: false,
+                auto_create_tier: 1,
+            },
+        )
+        .await;
+
+        assert!(result.is_err());
+        let json: Value = serde_json::from_slice(&std::fs::read(output_path).unwrap()).unwrap();
+        assert_eq!(json["passed"], false);
+        assert_eq!(json["planned_runs"], 1);
+        assert_eq!(json["scenarios"][0]["id"], "invalid");
+        assert!(json["issues"].as_array().unwrap().len() >= 2);
+    }
+
+    #[tokio::test]
+    async fn eval_validate_only_summary_outputs_human_readable_plan() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("anda-brain-eval-summary-{suffix}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let scenario_path = dir.join("scenario.json");
+        let output_path = dir.join("summary.txt");
+        std::fs::write(
+            &scenario_path,
+            r#"{
+              "id": "summary",
+              "hidden_profile": {},
+              "timeline": [{
+                "turn": 1,
+                "type": "checkpoint_synthetic",
+                "query": "What should I remember?",
+                "evaluation": {
+                  "required_answer_terms": ["direct"]
+                }
+              }]
+            }"#,
+        )
+        .unwrap();
+
+        let mut cli = test_cli();
+        cli.model_api_key = String::new();
+        run_eval_command(
+            &cli,
+            EvalCommandConfig {
+                space_id: "validate".to_string(),
+                scenario_paths: vec![scenario_path.to_string_lossy().to_string()],
+                profile_paths: Vec::new(),
+                output_path: Some(output_path.to_string_lossy().to_string()),
+                gate: EvalGate::default(),
+                validate_only: true,
+                summary_only: true,
+                auto_create_space: false,
+                auto_create_tier: 1,
+            },
+        )
+        .await
+        .unwrap();
+
+        let summary = std::fs::read_to_string(output_path).unwrap();
+        assert!(summary.contains("Eval validation passed"));
+        assert!(summary.contains("planned_runs: 1"));
+        assert!(summary.contains("- summary normal=0 checkpoint=1"));
+        assert!(summary.contains("- default maintenance=manual"));
     }
 
     #[test]

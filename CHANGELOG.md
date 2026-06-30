@@ -2,6 +2,15 @@
 
 All notable changes to the Anda Brain project.
 
+## [Unreleased] — 2026-06-30
+
+### Added
+- **Longitudinal memory eval harness.** `anda_brain::eval` can replay user timelines through Formation, optional Maintenance, and Recall checkpoints; score memory utility, forgetting quality, graph health, uncertainty, latency, and token cost; and attribute failures to Formation, Recall, Maintenance, grounding, synthesis, or overconfidence.
+- **`anda_brain eval` CLI command.** Local eval runs now support single scenarios, scenario suites, profile comparisons, JSON report output, score/finding gates for CI, and starter scenarios/profiles under `anda_brain/evals/`.
+- **Eval gate artifacts.** Gated `anda_brain eval` runs now embed the gate criteria, pass/fail state, and failure messages in the JSON report before returning a non-zero CI exit.
+- **Eval validate-only mode.** `anda_brain eval --validate-only` now checks scenario/profile inputs offline, emits an `EvalValidationReport`, and fails before model or storage initialization when inputs are unsafe.
+- **Eval fixture CI and summaries.** CI now runs the starter eval fixtures through offline validation, `anda_brain eval --summary-only` prints compact human-readable summaries, and the starter suite includes additional fact-correction, counterparty-boundary, travel-logistics, and expiring-discount scenarios.
+
 ## [0.9.2] — 2026-06-28
 
 ### Changed
