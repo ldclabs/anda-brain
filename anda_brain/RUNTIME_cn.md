@@ -8,7 +8,7 @@ Rust 服务负责持久化注意力调度及显式配置的记忆消费者。已
 
 | 文档 | 用途 |
 | --- | --- |
-| [API](API_cn.md#有身份的运行时待办与后果) | HTTP/MCP 认证、载荷与状态 |
+| [API](API_cn.md#authenticated-runtime-inbox-and-observations) | HTTP/MCP 认证、载荷与状态 |
 | [学习](LEARNING_RUNTIME_cn.md) | 配对试验、业务适配、归档与复审 |
 | [记忆效用](UTILITY_RUNTIME_cn.md) | 交付收据、贡献归因与校准排序 |
 | [语义 Watch](SEMANTIC_WATCH_RUNTIME_cn.md) | 模型合同、覆盖、预算与恢复 |
@@ -258,7 +258,7 @@ Formation/wiki 恢复、不刷新用户访问时间；后续正常访问仍能�
 去重；`ConsequenceRuntime::receipts(auth, lane, after, limit)`有界发现当前允许读取的审计和安全事项。
 
 输入上限 16 KiB、事件键 256 字节、运行时写入准入 16 项、每个观测索引最多一百万
-事件。测量载荷、迟到/更正处理及学习路由见[中文 API](API_cn.md#有身份的运行时待办与后果)。
+事件。测量载荷、迟到/更正处理及学习路由见[中文 API](API_cn.md#authenticated-runtime-inbox-and-observations)。
 
 ## 发布范围与验证
 

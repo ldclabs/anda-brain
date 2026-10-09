@@ -2,12 +2,36 @@
 
 All notable changes to the Anda Brain project.
 
+## [Unreleased]
+
+### Documentation
+
+- `README.md`, `README_cn.md` and `anda_brain/README.md` are rewritten against the
+  current code: the release-by-release notes that had piled up in them are gone, the
+  endpoint, MCP tool, configuration and `MemoryPolicy` tables match the service, and
+  the vegetarian example now records a changed world as temporal succession rather
+  than supersession. Anchors that other documents link to are kept.
+- `API.md` and `API_cn.md` are reorganized: conventions, an Authentication section
+  (admission classes, and the fact that `read` and `write` scopes do not include each
+  other), the Memory Interface, the endpoint list with the runtime routes as 4.6, the
+  MCP tools including the three runtime tools, errors, types, an example, the Rust host
+  APIs and execution limits. Superseded version notes are removed; every contract
+  detail is carried over unchanged.
+
 ## [0.13.4] — 2026-10-09
 
 On the same KIP `11a82ec` / `cognitive-memory@2.0.0` stack.
 
 ### Fixed
 
+- Formation, Recall and Maintenance no longer fail on Claude models. Through 0.13.3
+  their `execute_kip` / `execute_kip_readonly` definitions from `anda_kip` 0.14.0
+  carried a top-level `oneOf` (`command` versus `operations`), which Anthropic rejects
+  with a 400 for the whole request. The release locks `anda_kip` 0.14.2, whose
+  definitions use no schema combinators (a batch item is a `["string", "object"]` type
+  list, and the `command` / `operations` rule is checked when the request is parsed),
+  and `anda_engine` 0.16.8, whose Anthropic adapter also drops `oneOf`, `anyOf` and
+  `allOf` from the top level of every tool schema.
 - MCP tool schemas no longer contain `oneOf`, `anyOf` or `allOf`. schemars derived them
   from `Option<Struct>` fields, the untagged command and message-content enums and the
   tagged `AttentionResponse`, and model providers restrict them (Anthropic rejects them
@@ -20,16 +44,19 @@ On the same KIP `11a82ec` / `cognitive-memory@2.0.0` stack.
 
 ### Dependencies
 
-- `anda_engine` 0.16.7 (from 0.16.4), `anda_core` 0.16.3, `anda_cognitive_nexus`
-  0.14.4, `anda_db` 0.14.2 and `anda_kip` 0.14.1, under the existing requirements.
+- `anda_engine` 0.16.8 (from 0.16.4), `anda_core` 0.16.3 (from 0.16.2),
+  `anda_cognitive_nexus` 0.14.4 (from 0.14.2), `anda_db` 0.14.2 (from 0.14.1) and
+  `anda_kip` 0.14.2 (from 0.14.0), under the existing requirements.
 - `rmcp` / `rmcp-macros` 3.5.1 (from 3.5.0) and other lockfile-only patch updates.
 
 ### Known limits
 
-- Formation, Recall and Maintenance still offer `execute_kip` from `anda_kip` 0.14.1,
-  whose top-level `oneOf` Anthropic rejects, so they fail on a Claude model until the
-  lockfile picks up `anda_kip` 0.14.2 or an `anda_engine` release whose Anthropic adapter
-  drops top-level combinators.
+- The embedded KIP reference supplement still names its source `anda_kip` 0.14.0
+  (`assets/kip-reference/manifest.json`, `kip_reference::VERSION` and the Worker's
+  `assets/kip-reference.json`). The documents it carries are byte-identical in
+  0.14.2, so what the `kip_reference` tool serves is current, but
+  `scripts/sync-kip-reference.mjs --check` against the locked 0.14.2 reports drift in
+  `manifest.json` until the supplement is regenerated.
 
 ## [0.13.3] — 2026-09-29
 

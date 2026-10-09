@@ -1,79 +1,90 @@
 # Anda Brain API 文档（含 TypeScript 类型）
 
-Cloudflare Worker 的对应能力和限制见[逐提交核对](../anda-brain-worker/PORTING_AUDIT.md)与[受信宿主产品契约](../anda-brain-worker/PRODUCT_cn.md)。Worker 已同步来源记录、审阅式修改、恢复和处理代次边界；预算化 Recall、Wiki 和学习运行时仍不提供。 Worker 特有的操作回执、可空用量、共享模型超时和维护确认见其宿主契约；Rust API 形状不变。
+**[English](API.md) | [中文](API_cn.md)**
 
-Rust 现要求 Cognitive Nexus 0.13.4：Watch 触发会原子记录状态变化、`watch_fire`
-活动及受保护 wake，并提供可重放回执和原生租约。服务现会独立于 Full Maintenance
-调度结构化 Watch，从持久化目录发现已驱逐的注册 Space，并在重启后恢复有界扫描。
-受信任 Rust 宿主现可在加载 Space 前安装 `ActionBindings`：四分支决策、澄清、固定
-Attempt 和原生租约分派接入同一调度器。默认不安装生产执行器；运行时 API 已提供认证后的
-待办/回答/后果接口，`BRAIN_RUNTIME_CONFIG` 可装配持久化 inbox 和明确的身份映射，
-详见[运行时接入与恢复](RUNTIME_cn.md)。Space fork 不能复制原生运行身份。内部 `memory_runtime/status` 只读当前
-配置，不领取任务或授予权限；现有 HTTP payload 和 token scopes 保持兼容。
+本文档规定 Rust `anda_brain` 服务的 HTTP 与 MCP 接口（0.13.4，对齐 KIP `11a82ec` /
+`kip://profiles/cognitive-memory@2.0.0`）。总览、配置与部署见[技术参考](README.md)；
+面向智能体的用法见 [SKILL.md](SKILL.md)；运行时接入与恢复见 [RUNTIME_cn.md](RUNTIME_cn.md)。
+Cloudflare Worker 是另一套能力更少的实现，见[其 README](../anda-brain-worker/README.md)
+与[宿主契约](../anda-brain-worker/PRODUCT_cn.md)。
 
-不再有批量记忆强度衰减：强度在读取时按钉住的策略计算（KIP Spec §59.1）。宿主结算错误通过
-assessment.settlement_errors 提供给维护模型。
+## 目录
 
-<a id="trusted-host-memory-product-contracts"></a>
+1. [通用约定](#1-通用约定)
+2. [认证](#2-认证)
+3. [Memory Interface](#memory-interface)
+4. [接口列表](#4-接口列表)——[公共](#41-公共接口)、
+   [空间业务](#42-空间业务接口v1space_id)、
+   [Wiki](#43-wiki-接口v1space_idwiki)、
+   [空间管理](#44-空间管理接口v1space_idmanagement)、
+   [管理员](#45-管理员接口admin)、
+   [运行时](#authenticated-runtime-inbox-and-observations)
+5. [MCP Server](#5-mcp-server)
+6. [错误语义](#6-错误语义)
+7. [TypeScript 类型定义](#7-typescript-类型定义)
+8. [前端调用示例](#8-前端调用示例ts)
+9. [Rust 宿主接口](#9-rust-宿主接口)
+10. [执行与资源限制](#10-执行与资源限制)
 
-## 可信宿主记忆产品合同（v0.12.1）
-
-Rust `product` 模块提供由 Assertion 支撑的 `MemoryRecord`、稳定修订、明确的立场/语义生命周期/存储状态，以及 Evidence 的 typed 来源引用。`Space::product_records`、`product_record`、`product_source` 不负责终端用户认证；嵌入宿主在返回记录、预览、派生 ID 或来源引用前必须检查所有者及来源权限。摘要匹配证明来源关联，不证明推断正确。
-
-`Space::ingest_product` 接收有界、可信的 `SourceIdentity`，包含父会话/会话链标识，自然语言输入不能指定它。`product_prepare`、`product_commit`、`product_change`、`product_discard` 按 caller/operation 保存不可变请求，绑定修订、预览摘要及十分钟有效期。`ChangeKind` 指明变更写入哪一种历史（KIP Spec §14.2、Memory Interface §4）：
-
-- `Correct`：调用者自己的主张写错了。新主张带用户陈述 Evidence，supersede 旧 Assertion，并保留其原有的世界时间区间（缺失的起点写成 `{latest: <原 asserted_at>}`），由 `belief_revision` Activity 记录；旧 Assertion 状态为 `superseded`。
-- `WorldChange`：世界变了。从现在起写一条新主张，时序继承结束旧值；旧值保持 `active`，仍回答它所在时段的问题。
-
-两种修订都沿用该记录的 `context_refs`（`MemoryRecord` 已暴露）：跨上下文集合的 supersession 会报 `SupersessionMismatch`（规范 §14.2）；新值若不在旧值的上下文集合里，会另起一条继承线而结束不了旧值（规范 §25.4）。
-- `Misrecorded`：Brain 记下了调用者从未说过的话。这是 recording repair，通过 Memory Interface 的 `revise` 意图（`change_kind: "misrecorded"`）执行（见 [Memory Interface](#memory-interface)）；这个按值修订的产品 API 返回 `unsupported_capability`，绝不写成更正或世界变化。
-
-以上都不改写原 Concept 名称，也不伪造跨 Proposition 的 supersession。撤销是新的条件变更。
-
-`Suppress` 归档，`Delete` 清除已声明的有界集合：选定 Proposition/Assertions、引用输入及已记录的反向依赖。未知来源、Concept 级联、保留约束和超过 128 项的集合会被拒绝。写入前先持久接受来源排除与处理 epoch；原生任务不因 API 等待者取消而丢失，Space 重载开放前会恢复已接受操作。旧 Formation/Maintenance/Notes 写入被版本栅栏拦截。变更清空处理 Notes 和 miss cache、停止向新上下文注入旧处理历史，并限制自动 KIP 读取当前 active 数据；可信所有者审计接口保持独立。Recall 返回上下文前重新核对捕获的 epoch。
-
-受管理变更也会阻止预算版 Recall 注入旧历史，并在超时或轮次耗尽返回前检查处理版本。变更前开始的分页须从首页重试，变更后的分页仍可继续。删除会清理已清除内容在操作预览／更正正文中的副本，并废弃受影响的未提交意图，同时保留操作标识和摘要。若独立更正的声明及 Evidence 仍然存在，其来源正文会保留。更正来源读取会检查 Evidence 尚未清除且正文摘要一致。
-
-移除不清理宿主的原聊天、文件、日志、备份、其他独立图谱记录、已交付的上下文或服务商副本。最小来源标识与摘要用于阻止重放。用不含当前排除信息的旧备份覆盖数据库不是保留删除语义的回滚方式。宿主也必须清空自己的注入 Notes，并防止后续对话链再次导入已排除来源。
-
-`MemoryRuntime::{create_record_watch,record_watch,cancel_record_watch}` 使用不可伪造的已认证 `RuntimeCaller` 实现收件人拥有的窄范围订阅。创建持久记录身份，仅启用初始 generation；配置的控制器只获准归档该 Watch，持久标记保证不重新授予已撤销权限。取消使用原生归档，不伪造受保护运行状态；重试不重新启用。已投递的问题是独立工作，仍可见。它们是 Rust 接口，不新增通用模型工具或原生 HTTP 产品管理路由。
-
-`RuntimeConfig::validate` 静态校验不加载 Space、不运行模型、不探测业务服务、不配置授权。可选学习运行时的 `product_readiness` 表示已安装隔离工作流的准备度，区分服务缺失、身份摘要不匹配、校准未审阅及批准门槛。ready 不授予业务部署权限，每项工作的服务与原生权限检查仍必须执行。
-
-Anda Bot 通过已发布的 crate 使用这些合同，并保持 DB/KIP/Core 的单一类型身份。机制测试不证明真实学习收益或完整成本计量。
-
+---
 
 ## 1) 通用约定
 
-- Base URL: `http://{host}:{port}`
-- 认证头：`Authorization: Bearer <token>`
+- Base URL：`http://{host}:{port}`（服务默认监听 `127.0.0.1:8042`）。
+- 认证头：`Authorization: Bearer <token>`，见[认证](#2-认证)。
 - 分片部署：发送与服务端 `SHARDING_IDX` 相同的 `Shard-Id: <index>`（或 `X-Shard`）；默认值为 `0`。
-- 若 `ED25519_PUBKEYS` 为空或未提供，旧接口鉴权会关闭；新运行时接口仍要求真实凭据及映射，没有 CWT 验签器时独立后果 HTTP 写入不启用。
 - 支持的序列化格式：
   - 请求：`Content-Type: application/json | application/cbor | text/markdown`
   - 响应：`Accept: application/json | application/cbor | text/markdown`
   - 内容协商仅作用于成功响应体。处理器错误使用 JSON，与 `Accept` 无关；中间件限流（`429`/`503`）和未匹配路由可能返回纯文本或空响应体。
-- 大多数业务接口都会返回 RPC 包装后的结构体：`RpcResponse<T>`
-- MCP 客户端可使用内置的支持流式传输的 HTTP MCP 端点：`/mcp/<space_id>`，也可以使用本地 stdio server：`anda_brain mcp --space-id <space_id> [local|aws]`
+- 大多数接口返回 RPC 包装 `RpcResponse<T>`；`POST /v1/{space_id}/memory` 返回 Memory Interface 的 `Response`，`POST /v1/{space_id}/execute_kip_readonly` 返回 `KipResponse`。
+- 字符串时间为 RFC 3339，并规范化为毫秒精度 UTC（`YYYY-MM-DDTHH:mm:ss.SSSZ`）；数值时间为 Unix 毫秒。
+- MCP 客户端可使用内置的 Streamable HTTP 端点 `/mcp/<space_id>`，也可使用本地 stdio server：`anda_brain mcp --space-id <space_id> [local|aws]`，见 [MCP Server](#5-mcp-server)。
 
-KIP `597db44` / `cognitive-memory@2.0.0` 对齐说明：鉴权与 JSON/CBOR/Markdown 协商保持
-兼容；新增 `GET /v1/{space_id}/memory/attention`；settlement 报告移除衰减字段与
-`retention.expired_assertions`（衰减与主张到期在读取时计算）；`memory_strength_decay_factor`
-弃用；无法解析的 formation `timestamp` 返回 400。没有新增五意图 Memory Interface 或
-标准 after barrier。conversation id 不是处理回执。KIP `597db44` 的后续同步新增草稿词汇
-（`GET /v1/{space_id}/schema/drafts`、`POST /v1/{space_id}/schema/promote`）；attention 按
-`(raised_seq, ref)` 排序，游标可以停在同一次提交中间；到期 Commitment 由 settlement 原生
-提起（报告字段 `commitments`）；模型写入增加两道闸门：引用捕获消息的 Assertion 必须带
-`at`（或 `valid.from`），写 `MnemonicState.memory_strength` 必须同时写 `last_metabolized_at`
-与宿主绑定的 `strength_policy`（均返回 `ConstraintViolation`）。
-维护报告 `skills` 新增可选 `unsupported_reason`，说明没有配置可信学习管线，旧计数
-保持零。Watch 的 `disarmed` 兼容字段也统计 Nexus 的 expired；文本 Watch 无已配置的语义求值器时保持 deferred。
-模型生成的 Formation 请求不得覆盖宿主捕获的 ingest 或 msgN 绑定；学习/runtime Facet
-写入返回 UnsupportedCapability。原始管理 KIP 仍接受符合 Nexus 契约的受权写入。
+### 接口遵循的记忆语义
+
+- Formation 或 Maintenance 返回的 conversation id 只用于跟踪一次运行，不是处理回执。要知道记忆何时可用，请使用 Memory Interface 回执（Rust 中可用 `Space::processing_report` / `wait_for_processing`）。
+- 记忆强度的衰减在读取时按钉住的强度策略计算（KIP Spec §59.1）。没有任何清扫会写 `memory_strength`，settlement 报告不含衰减字段，`memory_strength_decay_factor` 仍被接受但不起作用。主张到期（`valid_time.until`）同样在读取时判断。
+- 宿主对模型写入设闸：引用捕获消息的 Assertion 必须带 `at`（或 `valid.from`），写 `MnemonicState.memory_strength` 必须同时写 `last_metabolized_at` 与宿主绑定的 `strength_policy`（均返回 `ConstraintViolation`）。模型生成的 Formation 请求不得覆盖宿主捕获的 ingest 或 `:msgN` 绑定；学习/runtime Facet 写入返回 `UnsupportedCapability`。原始管理 KIP 仍须满足引擎的完整契约。
+- 注意力按 `(raised_seq, ref)` 排序；到期的 Commitment 由 settlement 原生提起（报告字段 `commitments`）。settlement 报告中 Watch 的 `disarmed` 计数也包含 Nexus 的 expired；没有配置语义求值器时，文本 Watch 条件保持 deferred。宿主结算错误通过 `assessment.settlement_errors` 提供给维护模型。
+- 未配置可信学习管线时，settlement 的 `skills.unsupported_reason` 说明为何没有运行 Skill 裁决；旧计数保持为零。
+
+---
+
+## 2) 认证
+
+请求通过 `Authorization: Bearer <token>` 携带以下两种凭据之一：
+
+| 凭据 | 是什么 | 来源 |
+| --- | --- | --- |
+| CWT | Base64 编码的 COSE Sign1 令牌，由 `ED25519_PUBKEYS` 中某个 Ed25519 密钥签名，声明 `sub`（主体）、`aud`（Space id 或 `*`）和 `scope` | 持有受信签名密钥的一方，例如 `anda-cli cwt` |
+| Space token | 以 `ST` 开头的不透明值，带 `scope`、可选 `expires_at` 和可选的 Wiki ACL `labels` | `POST /v1/{space_id}/management/add_space_token`；完整值只返回一次 |
+
+**作用域**为 `read`、`write` 和 `*`（`TokenScope`）。`*` 满足任何要求；`read` 和 `write`
+只满足要求完全相同作用域的接口，因此 `write` 凭据不能调用私有 Space 的 `read` 接口。
+既写入又召回的智能体需要 `*` 凭据，或两种作用域各一份凭据。带标签的 Space token 必须是
+`read` 作用域。
+
+接口按以下方式接纳调用方：
+
+| 类别 | 接纳 | 示例 |
+| --- | --- | --- |
+| 公开读 | public Space 上任何人都可调用。若提供了 Space token，仍会校验以保留其标签限制；结果跨越全部标签的接口拒绝带标签的令牌。私有 Space 需要 `read` 凭据。 | `/recall`、`/recall_structured`、对话记录、Wiki 读取 |
+| 宽松公开读 | 同上，但在 public Space 上不校验令牌 | `/info`、`/status`、`/formation_status`、`/memory_status`、`/memory/attention`、`/schema/drafts`、`/probe`、`/execute_kip_readonly` |
+| 需凭据 | 具有所需作用域的 CWT 或 Space token | `/formation`、`/maintenance`、`/memory/pin`、`/memory/forget`、Memory Interface 变更类意图 |
+| 管理 | 针对本 Space 的 CWT；拒绝 Space token | `/management/*`、`/schema/promote`、`semantic` 遗忘 |
+| 管理员 | `sub` 列于 `MANAGERS` 的 CWT | `/admin/*` |
+| 运行时 | 经验证的凭据，加上 `BRAIN_RUNTIME_CONFIG` 中的显式映射 | `/attention`、`/attention/{id}/responses`、`/outcomes`、`/runtime/status` |
+
+若 `ED25519_PUBKEYS` 为空，除运行时类别外的所有接口都关闭认证：请求不经签名校验即被接受。
+除本地开发外切勿如此部署。运行时接口始终要求经验证的凭据和映射；没有 CWT 验签器时，
+独立后果的 HTTP 写入保持关闭。
+
+---
 
 <a id="memory-interface"></a>
 
-## Memory Interface（KIP 2.0，`memory_basic`）
+## 3) Memory Interface（KIP 2.0，`memory_basic`）
 
 每个 Space 都在 `memory_basic` 级别提供可选的 KIP 2.0 Memory Interface
 （`KIP-2.0-Memory-Interface.md`，线上形状见 `kip-memory.schema.json`）：五个意图——
@@ -265,7 +276,723 @@ conformance 适配器的真实模型运行未作为证据记录。
 
 ---
 
-## 2) TypeScript 类型定义
+## 4) 接口列表
+
+## 4.1 公共接口
+
+### GET `/favicon.ico` 和 GET `/apple-touch-icon.webp`
+
+- 说明：产品图标静态资源
+- 鉴权：无
+- 响应：`image/x-icon` 或 `image/webp`
+
+### GET `/info`
+
+- 说明：服务信息
+- 鉴权：无
+- 响应（JSON）：`ServiceInfo`
+
+### GET `/SKILL.md`
+
+- 说明：返回技能描述 Markdown
+- 鉴权：无
+- 响应：`text/markdown`
+
+---
+
+## 4.2 空间业务接口（`/v1/{space_id}`）
+
+### POST `/v1/{space_id}/formation`
+
+- 作用：提交记忆写入任务
+- 鉴权：SpaceToken/CWT `write`
+- 请求体：`FormationInput`（Markdown 模式下也允许原始字符串）
+- 观察时间接受任意时区偏移、最多毫秒精度的 RFC 3339 时刻，规范为 `YYYY-MM-DDTHH:mm:ss.SSSZ`；无法解析或精度超过毫秒的值直接拒绝（400），不会被替换。缺省时使用已保存的会话创建时间，重试沿用同一回退时间。消息自带的 `timestamp`（Unix 毫秒）是该条消息的观察时间。Formation 按所引用消息的观察时间写入每条主张的 `asserted_at`，而不是 Formation 运行的时间（KIP Spec §13.2）。Markdown 原文按一条 user 消息原样捕获，同样提供 `:msg1` Evidence 绑定。
+- 响应（JSON/CBOR）：`RpcResponse<AgentOutput>`
+- 响应（Markdown）：`string`（仅返回 `AgentOutput.content`）
+
+### POST `/v1/{space_id}/recall`
+
+- 作用：按自然语言召回记忆
+- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权，私有空间需有效 token）。带标签限制的 space token 会收到 `403`，因为 agentic Recall 可跨所有 wiki 标签读取。
+- 请求体：`RecallInput`（Markdown 模式下也允许原始字符串）
+- 响应（JSON/CBOR）：`RpcResponse<AgentOutput>`
+- 响应（Markdown）：纯文本 `AgentOutput.content`
+
+### POST `/v1/{space_id}/recall_structured`
+
+- 作用：返回合成答案、从检索轨迹提取的记忆引用、`found` 和可选不确定性。
+- 鉴权和请求体：同 `/recall`；带标签限制的 token 返回 `403`。
+- 响应（JSON/CBOR）：`RpcResponse<RecallOutput>`
+- 响应（Markdown）：纯文本 `RecallOutput.answer`
+
+<a id="recall-budget-contract"></a>
+
+### Recall 预算合同
+
+可选 `budget` 启用宿主选择的 JSON 记忆包，放在 `content` 中，替代自由生成的答案。
+`memory_policy.recall_budget` 可对所有 Recall 强制同一上限；请求只能收紧，不能提高或
+关闭策略。策略和请求均省略/null 时保持旧行为。
+
+每次请求先按当前问题执行有界、参数化的概念搜索。只有未完成的承诺（`pending`/`blocked`）
+作为必需项；已结束承诺作为可选历史候选。返回的紧凑记录保留 ID、版本和来源，省略重复的
+LegacyRecord 原文，并在 `recall_detail` 中列出省略字段。必需属性和原生程序检查不会被
+摘要掉。完整 Primer 仍进入规划上下文，交付包仅带紧凑的执行依据；需要详情时可用 KQL
+字段投影读取。
+
+可选候选逐条装包；`coverage.partial`、`coverage.omitted` 明示不完整交付。累计模型输入
+预算耗尽时，宿主仍可返回已授权读取的候选，同时附上必需警告 `recall_context_budget_exhausted`。
+这类响应是局部 `bounded` 包，不是模型合成答案或相关性证明。必需读取不完整，或输出预算
+连完整约束和警告都容纳不了时，仍返回 `budget_insufficient`；提供方调用失败也仍按失败处理。
+
+固定 codec 对 compact JSON 记忆包全文计数，含转义和 coverage；`context_tokens`
+另行限制本次 Recall 所有规划输入规范序列化的累计 token。提供商消息模板、计费和
+RPC/MCP 传输副本不属于这些范围。不根据模型名猜编码，也不回退字符数估算。
+预算响应不会附带历史、thoughts、artifacts 或工具调用作为记忆旁路。
+
+`recall_structured` 将同一包放在 `answer`，不从完整 trace 另外复制 citations，并增加
+`memory_budget`：`tokenizer`、`token_limit`、`tokens`、`context_token_limit`；此模式的
+`found` 仅表示交付了非 Primer 候选，不表示已证明语义相关或完整。Markdown 返回同一
+包文本。`budget_insufficient` 或带静态 `failed_reason` 的字面量 `null` 表示不可用/
+不充分，不能当成成功的空答案。预算允许时，包内可选的 `failed_reason` 字段携带同一
+固定错误代码，用于区分模型调用失败和 token 预算耗尽；该字段计入包的 token 总数，
+不会交付提供方的原始错误内容。预算失败使用固定代码：`recall_output_budget_exhausted`、
+`recall_required_read_incomplete`、`recall_context_budget_exhausted`、
+`recall_deadline_reached`、`recall_model_unavailable`、
+`recall_planner_incomplete` 或 `recall_procedure_window_incomplete`。
+记忆包始终是候选读取（`semantic_complete=false`、`action_ready=false`）。
+必要约束和警告作为整体保留；无法容纳时不交付普通记忆，不用估算或自由答案绕过预算。
+
+### POST `/v1/{space_id}/maintenance`
+
+- 作用：触发维护（睡眠/整理）
+- 鉴权：SpaceToken/CWT `write`
+- 请求体：`MaintenanceInput`
+- 响应：`RpcResponse<AgentOutput>`
+
+`parameters` 中明确提供的值覆盖空间策略；省略项使用空间策略的默认值。同一份有效参数同时用于确定性 settlement 和维护模型，不修改持久化的空间策略。
+
+### POST `/v1/{space_id}/memory/pin`
+
+- 作用：固定或取消固定一个图谱实体（`pinned` 保留类别，不参与保留期归档）。
+- 鉴权：SpaceToken/CWT `write`
+- 请求体：`MemoryPinInput`；`pinned` 默认 `true`。
+- 响应：`RpcResponse<MemoryPinOutput>`
+
+### POST `/v1/{space_id}/memory/forget`
+
+- 作用：物理删除图谱实体；删除前可用 `dry_run: true` 检查影响。
+- 鉴权：SpaceToken/CWT `write`
+- 请求体：`MemoryForgetInput`；`dry_run` 默认 `false`。
+- 响应：`RpcResponse<MemoryForgetReport>`；单个实体的错误位于 `result.entities`。
+
+接受显式的 Concept（`C-*`）、Proposition（`P-*`）、Assertion（`A-*`）、Evidence（`E-*`）和 Activity（`X-*`）ID，包括保存消息原文的 Evidence。原生 legal hold 和引用检查仍然生效，成功清除后保留已擦除身份桩。计数分别报告各类被清除记录，包含级联删除。此操作清除所选图谱记录；已保存的会话、wiki 文档及外部副本各有独立生命周期。
+引用已清除元素的产品预览会在报告成功前清理；预览清理失败会写入该实体的错误字段。
+
+### GET `/v1/{space_id}/memory/attention`
+
+- 作用：注意力召回（KIP Memory Interface §4）：返回调用方所保存游标之后，已触发的 Watch 与 settlement 判定到期的 Commitment。
+- 鉴权：SpaceToken/CWT `read`；公开空间允许匿名读取。
+- 查询参数：`AttentionRecallInput`——`attention_cursor`（可选）、`limit`（1–50 个条目，默认 20）。
+- 响应：`RpcResponse<AttentionRecall>`，保持 JSON/CBOR/Markdown 协商。游标或 limit 无效返回 400。
+
+```ts
+export interface AttentionRecallInput {
+  attention_cursor?: string; // 不透明；缺省、"attention:start" 或旧的 "attention:-1" 表示从第一次提起开始
+  limit?: number; // 1–50 个条目；默认 20
+}
+
+export interface AttentionRecall {
+  items: AttentionItem[]; // 按 (raised_seq, ref) 排序
+  // 最后交付的位置：页面停在一次提交中间时为 "attention:<seq>:<ref>"；该次提交及之前的
+  // 条目全部交付时为 "attention:<seq>"；没有新条目时为输入游标（或 "attention:start"）
+  attention_cursor: string;
+  complete: boolean; // 输入游标之后的所有提起是否都已读完
+}
+
+export interface AttentionItem {
+  ref: string; // 被提起的 Watch 或 Commitment
+  kind: 'watch_fired' | 'commitment_due';
+  summary: string;
+  raised_seq: number; // watch_fire / commitment_review Activity 的 space_seq
+  due_at?: string;
+  target_refs: string[]; // Watch 的 `watches` 目标，或该 Commitment
+  priority?: number;
+}
+```
+
+每个条目都由一次提交提起：`watch_fire` Activity，或指名某个到期 Commitment 的 `commitment_review` Activity。settlement 为每个到期、状态为 `pending`/`blocked` 且没有 Watch 的 Commitment 原生写一条这样的 Activity，键为 `commitment_review:<commitment id>:<due_at>`（Profile §17）：重放不会再次提起，只有新的 `due_at` 才会再次提起；Commitment 的状态不变。一次提交可以提起多个条目，页面可以停在它们中间，下一页从最后交付的条目之后继续。读取不改变记忆，游标不会过期，调用方取走条目后自行保存。条目不授予任何权限：据此行动仍须经过 action gate 与 Governance。它与有身份的运行时收件箱（`GET /v1/{space_id}/attention`，按 action gate 的 wake 记录分页）相互独立。
+
+### GET `/v1/{space_id}/schema/drafts`
+
+- 作用：本空间的草稿词汇（KIP §20.16）：Formation 用 `DEFINE`（或已弃用的 `declare_memory_symbols`）起草的每个符号、其定义，以及晋升后所并入的谱系。
+- 鉴权：SpaceToken/CWT `read`；公开空间允许匿名读取。
+- 响应：`RpcResponse<SchemaDrafts>`。
+
+```ts
+export interface SchemaDrafts {
+  package_ref: 'kip://local/draft@0.0.0';
+  schema_environment_version: number;
+  symbols: DraftSymbol[];
+}
+
+export interface DraftSymbol {
+  kind: 'ConceptType' | 'PredicateType';
+  name: string;
+  ref: string; // kip://local/draft@0.0.0/<name>；元素永久保留这个引用
+  definition: object; // 起草时的定义
+  promoted_to?: string; // 晋升目标谱系，如 kip://profiles/cognitive-memory/Person
+}
+```
+
+每个新草稿排一个 `review_schema` SleepTask，键为 `review_schema:<kind>:<ref>`（带 `symbol_kind` / `symbol_ref` 属性）。Maintenance 审阅它，可以在总结里提议晋升，但从不定义或晋升符号。Formation 定义符号的请求只能包含 `DEFINE`（最多 8 个），名称与定义体必须是字面量并符合本部署的命名形状；每个空间自有符号最多 512 个。
+
+### POST `/v1/{space_id}/schema/promote`
+
+- 作用：把一个草稿符号晋升到已安装包中同类别的符号（KIP §20.16）。这是 Schema 迁移：草稿下写入的元素保留原有的 `schema_ref` / `predicate_ref`，从新的 Schema Environment 版本起，类型与谓词匹配把两条谱系视为一条。每个草稿至多晋升一次，从不隐式晋升。
+- 鉴权：管理 CWT `write`（代表 `manage_schema`）；Space token 不能晋升。
+- 请求体：`{kind: 'ConceptType' | 'PredicateType', from: string, to: string}`——`from` 是草稿的本地名或确切引用，`to` 是已安装符号的确切引用或无歧义的本地名。
+- 响应：`RpcResponse<{promoted: string, to: string, schema_environment_version: number}>`。草稿不存在、类别不符、目标无法解析或重复晋升均返回 400。
+
+### GET `/v1/{space_id}/memory_status`
+
+- 用途：读取记忆统计和最近一次维护报告。
+- 鉴权：SpaceToken/CWT `read`；公开空间允许匿名读取。
+- 响应：`RpcResponse<MemoryStatus>`，保持 JSON/CBOR/Markdown 协商。
+- `result.last_settlement.correction_scan_incomplete`：本次有界扫描尚未证明 backlog 已耗尽，后续维护会从事务内部继续。
+- `result.last_settlement.correction_scan_through_seq`：已完整读取的最大事务序号。
+- `result.last_settlement.correction_scan_error`：扫描失败原因；失败不会推进游标。
+- 这些字段表示更正发现进度，不表示模型完成审查或 Watch 获得完整授权覆盖。
+
+### POST `/v1/{space_id}/execute_kip_readonly`
+
+- 作用：执行 KIP 请求（只读模式，适用于查询）
+- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权，私有空间需有效 token）
+- 请求体：`KipRequest`，或直接一个 JSON 字符串（按单条命令解析）
+- 若 `operations` 超过一项，必须提供 `execution.mode`；即使 HTTP 返回 `200`，也要检查顶层 `status` 和每个 `results[].status`。
+- 响应：`KipResponse<T>`（结果类型随命令而定）
+- 只读由命令**解析出的语义**决定：无论请求怎么标注，KML 变更都会在这里被拒绝
+
+### POST `/v1/{space_id}/get_or_init_user`
+
+- 作用：按给定 principal 获取或初始化用户 Concept 节点
+- 鉴权：SpaceToken/CWT `write`
+- 请求体：`GetOrInitUserInput`
+- 省略 `name` 时保留已有显示名；显式提供 `name` 时更新显示名。首次创建且未提供姓名时，使用 key 作为初始显示名。
+- 响应：`RpcResponse<Concept>`
+
+### GET `/v1/{space_id}/info`
+
+- 作用：获取空间状态和统计
+- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权，私有空间需有效 token）
+- 响应：`RpcResponse<SpaceInfo>`
+
+### GET `/v1/{space_id}/status`
+
+- `/v1/{space_id}/info` 的别名，鉴权和响应相同。
+
+### POST `/v1/{space_id}/probe`
+
+- 作用：无需模型的检索可达性检查；`found:false` 不代表信念被否定。
+- 鉴权：沿用 Space 的 `read` 权限和公开空间读取规则。
+- 请求：`{"query":"...", "limit":8}`。
+- 响应：`RpcResponse<ProbeOutput>`，含 `found`、`negative_cached`、可选 `hits` 和可选 `search_exhaustive`。后者来自 SEARCH result 顶层覆盖字段；缺省表示未知，有剩余分页时为 false。负缓存仅保存明确穷尽的检索 miss，不能作为不存在或信念被否定的证明。
+
+### GET `/v1/{space_id}/formation_status`
+
+- 作用：获取记忆写入状态（更轻量级的接口，专门用于监控记忆写入进度）
+- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权，私有空间需有效 token）
+- 响应：`RpcResponse<FormationStatus>`
+- 此接口是轻量监控，游标不是逐任务成功证明。Rust 宿主可用 `Space::processing_report` / `wait_for_processing` 区分排队、运行、失败、取消、中断和超时；超时后继续核对同一 conversation ID，不重新提交。
+
+### GET `/v1/{space_id}/conversations/{conversation_id}?collection=<collection>`
+
+- 作用：获取单条会话详情
+- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权，私有空间需有效 token）；带 ACL 标签限制的 token 返回 `403`——会话持久化了完整的 agent 运行历史，不受标签过滤；`collection=recall` 对公开空间的匿名访问也返回 `403`（私有期的 recall 运行可能内嵌 labeled wiki 内容）
+- Query:
+  - `collection?: string` // "formation"（默认）、"recall" 或 "maintenance"；未知值返回 `400`
+- 响应：`RpcResponse<Conversation>`
+
+### GET `/v1/{space_id}/conversations/{conversation_id}/delta?collection=<collection>&messages_offset=<n>&artifacts_offset=<n>`
+
+- 作用：按客户端已消费的 offset 获取会话增量更新
+- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权，私有空间需有效 token）；带 ACL 标签限制的 token 返回 `403`（`collection=recall`：公开空间匿名访问同样拒绝）
+- Query:
+  - `collection?: string` // "formation"（默认）、"recall" 或 "maintenance"；未知值返回 `400`
+  - `messages_offset?: number` // 仅返回该偏移量之后的新消息，默认 `0`
+  - `artifacts_offset?: number` // 仅返回该偏移量之后的新 artifacts，默认 `0`
+- 响应：`RpcResponse<ConversationDelta>`
+
+### GET `/v1/{space_id}/conversations?collection=<collection>&cursor=<cursor>&limit=<n>`
+
+- 作用：分页列出会话
+- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权，私有空间需有效 token）；带 ACL 标签限制的 token 返回 `403`（`collection=recall`：公开空间匿名访问同样拒绝）
+- Query:
+  - `collection?: string` // "formation"（默认）、"recall" 或 "maintenance"；未知值返回 `400`
+  - `cursor?: string`
+  - `limit?: number`
+- 响应：`RpcResponse<Conversation[]>`（并通过 `next_cursor` 给出下一页游标）
+
+---
+
+## 4.3 Wiki 接口（`/v1/{space_id}/wiki`）
+
+Wiki 是空间的版本化参考记忆（政策、手册、SOP、API 文档）。写入是 Git 式不可变提交（CAS 并发控制）；检索返回可校验的 `wiki://` 引用。ACL：文档可携带 `acl_label`；带 `labels` 的 space token 仅可见无标签内容 + 所授标签——查询预过滤后仍核对文档当前版本、状态和权限。权限检查与版本选择共享同一文档快照。公开空间的匿名读者仅可见无标签内容；越权一律表现为 404。
+
+Wiki 专属错误语义：`409` 提交冲突（`RpcError.data.current_version` 为应 rebase 的版本）、`413` 内容超 1 MiB、`404` 不存在或 ACL 拒绝。
+
+目录由 Markdown 的 ATX 标题（`#`–`######`）生成，独立于检索分块；读取 section 包含该标题的子章节。锚点按标题派生，同名标题加序号。`full`、`range` 和 `section` 均最多返回 256 KiB；`truncated` 为 true 时，使用返回的 `byte_range` 继续读取。历史和引用校验只接受已发布 parent 链中的版本，失败提交的残留不是历史。
+
+OKF 导入按完整文件替换 title、tags、resource、type 和未知 frontmatter 键值，删除字段会清空对应导入状态；已有 ACL 与其他宿主 metadata 保留。标题或标签经 commit 修改后，导出仍保留未知键值。YAML 使用标准解析和序列化，不承诺注释或原始排版保真。
+
+WikiDigest 默认关闭。开启后，commit、archive、restore 和 ACL 变化持久化文档待处理标记；每轮最多处理 20 个文档，启动、维护后或显式调用时推进，失败文档保留待重试。正文校验和未变时复用已有账本，不再调用模型。提取漏项不是撤回依据：对旧断言必须在每个正文批次中明确核验为 `absent`，缺失、重复或 `unknown` 判断均保留原断言。归档或加标签由后续 digest 撤回本来源断言；该图谱同步是异步的。模型处理中发生文档变更时，不发布旧结果，保留新一代待处理标记。观测高水位 `wiki_digested` 不表示队列已经清空。
+
+
+### POST `/v1/{space_id}/wiki/docs`
+
+- 作用：提交文档（创建；或携带 `doc_id` + `parent_version` 做 CAS 更新）；同内容提交为零写入
+- 鉴权：SpaceToken/CWT `write`
+- 请求体：`WikiCommitInput`（也接受原始 Markdown 字符串，标题取首个标题行）
+- 响应：`RpcResponse<WikiCommitOutput>`
+
+### GET `/v1/{space_id}/wiki/docs?namespace=<ns>&status=<status>&tag=<tag>&cursor=<cursor>&limit=<n>`
+
+- 作用：分页列出文档
+- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权；ACL 标签生效）
+- 响应：`RpcResponse<WikiDocInfo[]>`（下一页游标经 `next_cursor` 返回）
+
+### GET `/v1/{space_id}/wiki/docs/{doc_id}`
+
+- 作用：文档元信息 + 目录（TOC）
+- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权；ACL 标签生效）
+- 响应：`RpcResponse<{ doc: WikiDocInfo; toc: WikiTocEntry[] }>`
+
+### GET `/v1/{space_id}/wiki/docs/{doc_id}/content?version=<id>&anchor=<anchor>&start=<n>&end=<n>`
+
+- 作用：渐进读取——`anchor` 读单节、`start`+`end` 读字节区间、均不传读受限全文；`version` 读历史版本
+- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权；ACL 标签生效）
+- 响应：`RpcResponse<WikiReadOutput>`
+
+### GET `/v1/{space_id}/wiki/docs/{doc_id}/versions?cursor=<cursor>&limit=<n>`
+
+- 作用：版本历史（不可变提交链）
+- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权；ACL 标签生效）
+- 响应：`RpcResponse<WikiVersionInfo[]>`（下一页游标经 `next_cursor` 返回）
+
+### POST `/v1/{space_id}/wiki/docs/{doc_id}/archive`
+
+- 作用：归档文档（退出检索，仍可按 id 读取，可恢复）
+- 鉴权：SpaceToken/CWT `write`
+- 响应：`RpcResponse<WikiDocInfo>`
+
+### POST `/v1/{space_id}/wiki/docs/{doc_id}/restore`
+
+- 作用：恢复归档文档进入检索
+- 鉴权：SpaceToken/CWT `write`
+- 响应：`RpcResponse<WikiDocInfo>`
+
+### POST `/v1/{space_id}/wiki/search`
+
+- 作用：BM25 关键词检索，返回片段与可校验引用
+- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权；ACL 标签生效）
+- 请求体：`WikiSearchInput`（也接受原始查询字符串）
+- 响应：`RpcResponse<WikiSearchOutput>`
+
+### POST `/v1/{space_id}/wiki/verify`
+
+- 作用：对照不可变存储校验引用
+- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权；ACL 标签生效）
+- 请求体：`WikiVerifyInput`（也接受原始 `wiki://` URI 字符串）
+- 响应：`RpcResponse<WikiVerifyOutput>`
+
+### GET `/v1/{space_id}/wiki/events?kind=<kind>&doc_id=<id>&cursor=<cursor>&limit=<n>`
+
+- 作用：查询 append-only 审计日志（写入、导入、蒸馏；开启 `wiki_audit_reads` 后含读操作）
+- 鉴权：SpaceToken/CWT `read`；受 ACL 标签限制的 token 返回 `403`
+- 响应：`RpcResponse<WikiEventInfo[]>`（下一页游标经 `next_cursor` 返回）
+
+### POST `/v1/{space_id}/wiki/import`
+
+- 作用：导入 OKF v0.1 bundle；checksum 幂等（重复导入零版本膨胀）；未知 frontmatter 键值按结构保留；YAML 注释、字段顺序及标量排版不保留
+- 鉴权：SpaceToken/CWT `*`（全量 scope）
+- 请求体：`WikiImportInput`
+- 响应：`RpcResponse<WikiImportOutput>`
+
+### GET `/v1/{space_id}/wiki/export?namespace=<ns>`
+
+- 作用：按 namespace 导出 OKF bundle（concept `.md` + `index.md` + 含校验和的 `manifest.json`）；可在空库完整重放
+- 鉴权：SpaceToken/CWT `*`（全量 scope）
+- 响应：`RpcResponse<WikiExportOutput>`
+
+### POST `/v1/{space_id}/wiki/digest`
+
+- 作用：把待处理 wiki 版本蒸馏进 Cognitive Nexus（每条事实写成 Proposition + 归属于 Brain 的 Assertion，并引用对应段落作为 Evidence）；经完整正文批次明确核验不再支持的旧断言，digest 撤回自己的 Assertion；漏提取或未知判断不会触发撤回，Proposition 与他人的 Assertion 不受影响（需先 `update_space {"wiki_digest": true}` 开启）
+- 鉴权：SpaceToken/CWT `write`
+- 响应：`RpcResponse<WikiDigestReport>`
+
+---
+
+## 4.4 空间管理接口（`/v1/{space_id}/management`）
+
+### GET `/v1/{space_id}/management/space_tokens`
+
+- 作用：列出 Space Token
+- 鉴权：必须通过 CWT `write`（用户管理级鉴权）
+- 响应：`RpcResponse<SpaceToken[]>` —— `token` 字段仅显示前缀（如 `STabc123…`）；完整 token 值只在 `add_space_token` 响应中出现一次，铸造时务必保存，或后续凭 `name` 吊销
+
+### POST `/v1/{space_id}/management/add_space_token`
+
+- 作用：新增 Space Token
+- 鉴权：必须通过 CWT `write`（用户管理级鉴权）。铸造 `*`（全 scope）token 需要 `*` scope 的 CWT——`write` CWT 不能铸造高于自身 scope 的 token
+- 请求体：`AddSpaceTokenInput` —— `name` 必填且空间内唯一。仅 `read` token 可设置 `labels`；`[]` 表示仅可读无标签 wiki 内容，省略表示不受标签限制。
+- 响应：`RpcResponse<SpaceToken>`（新 token，前缀总是 `ST`；这是唯一携带完整 token 值的响应）
+
+### POST `/v1/{space_id}/management/revoke_space_token`
+
+- 作用：吊销 Space Token
+- 鉴权：必须通过 CWT `write`（用户管理级鉴权）
+- 请求体：`RevokeSpaceTokenInput` —— 传 `token`（完整 token 值）或 `name`（唯一 token 名称，供未保存 token 值的管理者使用）
+- 响应：`RpcResponse<boolean>`（是否成功吊销）
+
+### PATCH `/v1/{space_id}/management/update_space`
+
+- 作用：更新空间信息、wiki 设置及可选的 `memory_policy`（校验后作为新策略持久化）。
+- 鉴权：必须通过 CWT `write`（用户管理级鉴权）
+- 请求体：`UpdateSpaceInput`
+- 响应：`RpcResponse<true>`
+
+### POST `/v1/{space_id}/management/shadow_eval`
+
+- 作用：在空间副本上重放近期 Recall，对比候选记忆策略和当前策略；可能产生多次模型调用。
+- 鉴权：CWT `write`（不接受 space token）。
+- 请求体：`ShadowEvalInput`；`replay_sample` 默认采用空间策略，上限为 `16`。
+- 响应：`RpcResponse<ShadowReport>`
+
+### PATCH `/v1/{space_id}/management/restart_formation`
+
+- 作用：通过会话 ID 重启记忆写入任务（用于失败/过期的写入任务）
+- 鉴权：必须通过 CWT `write`（用户管理级鉴权）
+- 请求体：`FormationRestartInput`
+- 响应：`RpcResponse<true>`
+
+### GET `/v1/{space_id}/management/space_byok`
+
+- 作用：获取 BYOK（Bring Your Own Key）配置，即使用自定义模型配置
+- 鉴权：必须通过 CWT `write`（用户管理级鉴权；响应包含模型供应商凭据）
+- 响应：`RpcResponse<ModelConfig>`
+
+### PATCH `/v1/{space_id}/management/space_byok`
+
+- 作用：更新 BYOK（Bring Your Own Key）配置，即使用自定义模型配置
+- 鉴权：必须通过 CWT `write`（用户管理级鉴权）
+- 请求体：`ModelConfig`
+- 响应：`RpcResponse<true>`
+
+---
+
+## 4.5 管理员接口（`/admin`）
+
+### POST `/admin/create_space`
+
+- 作用：创建空间
+- 鉴权：平台管理员 + CWT `write`
+- 请求体：`CreateOrUpdateSpaceInput`
+- 响应：`RpcResponse<SpaceInfo>`
+
+### POST `/admin/{space_id}/update_space_tier`
+
+- 作用：更新空间 tier
+- 鉴权：平台管理员 + CWT `write`
+- 请求体：`CreateOrUpdateSpaceInput`
+- 响应：`RpcResponse<SpaceTier>`
+
+---
+
+<a id="authenticated-runtime-inbox-and-observations"></a>
+
+## 4.6 运行时接口（有身份的待办与后果）
+
+启动前配置 `BRAIN_RUNTIME_CONFIG`。完整合同、恢复及示例见 [RUNTIME_cn.md](RUNTIME_cn.md)
+和 [runtime.example.json](runtime.example.json)。公共/本地 Space 也必须提供真实凭据。
+
+| 接口 | 授权 | 返回 |
+| --- | --- | --- |
+| `GET /v1/{space_id}/attention?limit=20&cursor=...` | 真实 read/* 凭据、原生主体映射和 audience | `AttentionPage`，读取不领取 |
+| `POST /v1/{space_id}/attention/{id}/responses` | 真实 write/*、当前可见性及正确接收者 | `ResponseReceipt`，body 为 `AttentionResponse` |
+| `POST /v1/{space_id}/outcomes` | 验签的观察者 CWT、当前 record_outcome 及登记合同 | `ObservationReceipt`，body 为 `OutcomeInput` |
+| `GET /v1/{space_id}/runtime/status` | 真实 read/*，配置启用时需映射 | `RuntimeStatus`，计数仅覆盖可见的有限页面 |
+
+URL 中的 id 是返回的 wake 摘要，不是带斜杠的 wake_ref。五分钟有效的游标经加密认证，
+绑定调用者/instance/配置；跨调用者或过期游标被拒绝。公共 Space 和普通 write token
+不能认证独立观察者。MCP 暴露 get_attention、respond_attention、get_runtime_status
+（均带 anda_brain_ 前缀），观察者写入不属于模型工具。
+
+POST 使用结构化 JSON/CBOR，响应保留 JSON/CBOR/Markdown 协商。同事件同文幂等，
+异文 409 并留存审计；未来时间或错误 instance 被拒绝。迟到/更正/安全状态、原生提交
+和 learning 入样分别报告。learning 变体必须符合原有 OutcomeMeasurements 合同，
+包括 baseline 在内均只路由到既有控制器。
+
+```ts
+type RuntimeScope = { space_id: string; space_instance: string };
+type AttentionQuery = { cursor?: string | null; limit?: number | null };
+type AttentionResponse =
+  | { kind: "clarification"; event_key: string; answer: string }
+  | { kind: "agent_statement"; event_key: string; statement: string };
+type ResponseReceipt = {
+  receipt_id: string; status: string; evidence_ref: string | null;
+};
+type AttentionPage = {
+  scope: RuntimeScope; items: AttentionItem[];
+  next_cursor: string | null; complete: boolean;
+};
+type AttentionItem = {
+  id: string; wake_ref: string; parent_id: string | null;
+  watch_ref: string; fire_activity_ref: string; summary: string;
+  state: "pending" | "running" | "blocked" | "completed" | "cancelled";
+  reason: string | null; decision: Record<string, unknown> | null;
+  decision_ref: string | null; attempt_ref: string | null;
+  dispatch_ref: string | null; clarification: Record<string, unknown> | null;
+  delivery: Record<string, unknown> | null;
+};
+type OutcomeStatus = "success" | "partial" | "failure" | "aborted" | "unknown";
+type OutcomeInput = {
+  space_instance: string; attempt_ref: string;
+  observer_configuration_digest: string; event_key: string;
+  observed_at: string; metric: string; window: string;
+  observation:
+    | { kind: "measurement"; terminal: boolean; outcome_status: OutcomeStatus;
+        magnitude?: number | null; payload: unknown }
+    | { kind: "learning"; measurements: Record<string, unknown> };
+  correction_of?: string | null; safety_signal?: string | null;
+  utility?: { witness_ref?: string; witness?: ContributionWitness } | null;
+};
+type ObservationReceipt = {
+  format: "anda-brain:observation-receipt-v1";
+  receipt_id: string; scope: RuntimeScope; event_key: string;
+  body_digest: string; observer: string; received_at_ms: number;
+  observed_at: string; status: string;
+  native_committed: boolean; learning_eligible: boolean;
+  outcome_status: OutcomeStatus | null; outcome_ref: string | null;
+  observation_ref: string | null; reason: string | null; safety_pending: boolean;
+  safety_evaluation_ref?: string; // 解决或覆盖本安全信号的原生撤销记录。
+};
+type RuntimeStatus = {
+  supported: boolean; configured: boolean; scope: RuntimeScope | null;
+  attention_enabled: boolean; actions_enabled: boolean;
+  observation_enabled: boolean; observer_authenticated: boolean;
+  blocked_reasons: string[]; visible_items: number; inventory_complete: boolean;
+  utility?: UtilityStatus;
+  learning?: LearningRuntimeStatus;
+  semantic_attention?: SemanticAttentionStatus;
+  trust?: TrustRuntimeStatus;
+};
+```
+
+### 后果与回答语义
+
+待办页包含 1–50 项、最多 256 KiB 可见输出。`complete` 仅表示本次快照遍历结束，
+不表示任务完成或语义完整；每页重验可见性，包括 gate 记忆包背后的原生证据。
+MCP 回答参数为 `{id, response}`，列表参数为 `{cursor, limit}`。读取和回答均不领取
+任务；澄清回答须对应已提交 ask、正确接收者和有效期限，回答进入新 gate，不授予权限。
+`agent_statement` 只生成带归属 Evidence 和 Activity，不生成独立 OutcomeRecord。例如：
+
+```json
+{"kind":"clarification","event_key":"answer-42","answer":"明天"}
+```
+
+测量请求使用实际保留的身份与摘要：
+
+```json
+{
+  "space_instance":"sha256:INSTANCE_DIGEST",
+  "attempt_ref":"X-42",
+  "observer_configuration_digest":"sha256:REGISTERED_METHOD_DIGEST",
+  "event_key":"instrument-event-42",
+  "observed_at":"2026-09-17T10:00:00.000Z",
+  "metric":"delivery",
+  "window":"durable_inbox_v1",
+  "observation":{
+    "kind":"measurement",
+    "terminal":true,
+    "outcome_status":"success",
+    "magnitude":null,
+    "payload":{"delivery_digest":"sha256:ACTUAL_DELIVERY_REQUEST_DIGEST"}
+  },
+  "correction_of":null,
+  "safety_signal":null
+}
+```
+
+观察合同固定主体、方法/配置摘要、控制域、任务族、指标、窗口及允许延迟。接收层验证
+真实 act/Attempt、原生事务作者、已存在分派和观测时间，拒绝控制器自评。inbox 成功还
+须验证实际持久化投递及匹配的摘要/时间，仅证明 inbox 写入，不代表人已阅读或业务成功。
+其他回调须提供自己的独立测量合同。
+
+普通合格测量原子生成 Outcome Evidence 与 `outcome_observation` Activity；原始材料
+保留在 Evidence payload，不扩展封闭的 OutcomeRecord Facet。非终结/unknown 不完成
+分派，缺失 magnitude/cost 不填零。终结证据对账同一 Attempt，取消后也可保留真实后果。
+原生留证与分派对账是两个可恢复步骤；未确认写入须用相同事件/内容和新鲜认证重试。
+调用方取消不截断已接收写入。
+
+认证后的迟到、冲突及学习非终结材料可审计，不改变旧试验入样资格。更正指向同一
+观察者/Attempt 的较早事件，追加证据，不改写旧 Outcome/Evaluation。迟到或排除的
+安全信号仍可发现；显式启用的学习消费者使用当前观察者权限，在原生撤销完成后才确认
+`safety_pending` 并记录 `safety_evaluation_ref`。
+
+已登记学习 Attempt 使用 `observation:{"kind":"learning", "measurements":{...}}`。
+归属来自保留的 ticket，`trial_ref:null` 的 baseline 也不会落入普通写入器；只有
+`LearningRuntime::submit_outcome` 写原生结果，保持冻结 cutoff、可比性和 ACK 恢复。
+控制器不可用时拒绝，不转普通路径。`learning_eligible:true` 只表示合同接纳，不等于
+正向裁决。输入上限 16 KiB，事件键 256 字节；身份装配和存储上限见[运行时指南](RUNTIME_cn.md)。
+
+### 学习运行状态
+
+既有 status 路由和 MCP 工具新增 learning；模型工具不提供 cohort 报名或观察者
+凭据管理。只有明确映射的 auditor 能看到 capacity / last_pass，其他调用方为 null。
+Maintenance 的可选 skills.runtime 显示独立调度状态，旧 Skill 计数不会重复计入
+此前调度工作。详见[学习指南](LEARNING_RUNTIME_cn.md)。
+
+```typescript
+type LearningRuntimeStatus = {
+  compiled: boolean; registered: boolean; registration_enabled?: boolean;
+  bindings_ready: boolean; automatic_allowed: boolean; running?: boolean;
+  automation?: { trials: boolean; reviews: boolean; archive: boolean; safety: boolean };
+  blocked_reasons?: string[];
+  capacity?: { hot_jobs: number; maximum_hot_jobs: number; archived_jobs: number;
+    retained_identities: number; reserved_bytes: number;
+    storage: { maximum_records: number; maximum_reserved_bytes: number } } | null;
+  last_pass?: { started_at_ms: number; finished_at_ms: number; enrolled: number;
+    driven: number; observed: number; settled: number; archived: number;
+    reviews_checked: number; reviews_enrolled: number; safety_resolved: number;
+    blocked: string[] } | null;
+};
+```
+
+### 交付与效用元数据
+
+结构化 Recall 新增可选 recall_receipt 元数据，answer/语义 packet 保持不变。普通或
+直接 agent 调用可通过 conversation ID 在可信 Rust API 查询收据。观察者在 outcomes
+的 utility 中可选择内联见证或既有原生见证引用，不放宽验签与独立权限检查。
+运行状态新增 utility 的开关、校准状态及恢复原因；模型没有设置分数或新增 MCP
+变更工具。详见 [UTILITY_RUNTIME_cn.md](UTILITY_RUNTIME_cn.md)。
+
+```typescript
+type RecallReceiptRef = {
+  id: string; digest: string; scope: RuntimeScope;
+};
+// RecallOutput.recall_receipt?: RecallReceiptRef
+// OutcomeInput.utility?: { witness_ref?: string; witness?: ContributionWitness }
+// RuntimeStatus.utility?: UtilityStatus
+type UtilityStatus = {
+  configured: boolean; automatic: boolean; apply: boolean;
+  calibrated: boolean; ranking: boolean; running: boolean;
+  reason: string | null;
+};
+```
+
+### 文本注意力状态
+
+Runtime status 新增可选 `semantic_attention`：`configured`、`automatic`、`running`、
+`pin`、`reason` 及可空的 `last_pass`。后者包含单轮有界统计 `scanned`、`calls`、
+`input_tokens`、`advanced`、`fired`、`expired`、`deferred`、`reason`，仅配置为 auditor
+的调用者可读取，其他调用者得到 null。它不是完整清单，也不证明所有文本 Watch
+均已求值。既有 JSON/CBOR/Markdown 和 HTTP/MCP 请求形状保持兼容；不新增模型配置
+或求值写接口。操作员通过每 Space 的 `semantic` 启动绑定安装。预算、pin 迁移、
+unknown/deferred、原生 Artifact 擦除及幂等恢复见
+[SEMANTIC_WATCH_RUNTIME_cn.md](SEMANTIC_WATCH_RUNTIME_cn.md)。
+
+```typescript
+type SemanticAttentionStatus = {
+  configured: boolean; automatic: boolean; running: boolean;
+  pin: { id: string; digest: string } | null; reason: string | null;
+  last_pass: {
+    scanned: number; calls: number; input_tokens: number; advanced: number;
+    fired: number; expired: number; deferred: number; reason: string | null;
+  } | null;
+};
+```
+
+### 上下文 trust 状态与发现提示
+
+既有 HTTP 状态路由和 MCP 状态工具新增可选 `trust` 元数据。`governor_authorized`
+表示配置的治理主体当前是否具有原生权限，不是授予调用者的权限。不新增 HTTP/MCP
+trust 管理或独立事实写工具，既有 JSON/CBOR/Markdown 请求保持兼容。正常认证的
+独立 measurement payload 可选携带 `trust_verification_ref: "E-…"`，用于公告既有原生
+事实核验记录并有界发现，不能把行动成功/失败转成信任得分。可信 Rust 事实接收、
+审查、应用、版本冲突恢复和限定域回退见 [TRUST_RUNTIME_cn.md](TRUST_RUNTIME_cn.md)。
+
+```typescript
+type TrustRuntimeStatus = {
+  configured: boolean; automatic: boolean; apply: boolean; automatic_apply: boolean;
+  calibrated: boolean; governor_authorized: boolean; running: boolean;
+  reason: string | null;
+};
+```
+
+---
+
+## 5) MCP Server
+
+默认情况下，HTTP 服务会暴露支持流式传输的 HTTP MCP 端点；`MCP_HTTP_ENABLED=false` 可关闭它：
+
+```text
+https://your-brain-host/mcp/my_space_001
+```
+
+Client 通过 URL path 选择目标记忆空间，并使用与 REST 相同的 CWT 或 space token：`Authorization: Bearer <token>`。这适合公司内部多用户智能体平台：为每位员工分配一个 Brain space，员工的智能体通过 MCP 连接自己的空间。
+
+Anda Brain 也可作为本地 MCP stdio server 运行：
+
+```bash
+MCP_AUTH_TOKEN="$SPACE_TOKEN" \
+  anda_brain mcp --space-id my_space_001 local --db ./data
+```
+
+两种 MCP 模式都复用 HTTP 服务的模型、认证和存储配置，并共享其模型并发预算。stdio 模式的嵌套 storage 子命令可省略（内存开发模式），也可以使用 `local --db ./data` 持久化到本地，或使用 `aws --bucket ... --region ...` 连接 S3。
+
+| Tool | Input | Output | Scope |
+| ---- | ----- | ------ | ----- |
+| `anda_brain_memory` | `{ request: MemoryRequest }` | `MemoryResponse` | recall 为 `read`；变更类为 `write` |
+| `anda_brain_stage_memory_source` | `StageSourceInput` | `StagedSourceRef` | `write` |
+| `anda_brain_memory_receipt` | `{ receipt_ref }` | `{ receipt, progress, result, warnings }` | `read` 凭据 |
+| `anda_brain_remember_conversation` | `FormationInput` 形状（`messages`, `context`, `timestamp`） | `AgentOutput` | `write` |
+| `anda_brain_recall_memory` | `RecallInput` 形状（`query`, `context`，可选 `budget`） | `AgentOutput` | `read` |
+| `anda_brain_run_maintenance` | `MaintenanceInput` 形状 | `AgentOutput` | `write` |
+| `anda_brain_get_space_info` | 无 | `SpaceInfo` | `read` |
+| `anda_brain_get_formation_status` | 无 | `FormationStatus` | `read` |
+| `anda_brain_execute_kip_readonly` | `{ command?, commands?, parameters?, dry_run? }` | `KipResponse` | `read` |
+| `anda_brain_get_or_init_user` | `{ user, name? }` | `Concept` | `write` |
+| `anda_brain_list_conversations` | `{ collection?, cursor?, limit? }` | `{ conversations, next_cursor }` | `read` |
+| `anda_brain_get_conversation` | `{ conversation_id, collection?, delta?, messages_offset?, artifacts_offset? }` | `Conversation` 或 `ConversationDelta` | `read` |
+| `anda_brain_get_attention` | `{ cursor?, limit? }` | `AttentionPage` | 运行时：经验证的 `read` + 映射 |
+| `anda_brain_respond_attention` | `{ id, response: AttentionResponse }` | `ResponseReceipt` | 运行时：经验证的 `write` + 映射 |
+| `anda_brain_get_runtime_status` | 无 | `RuntimeStatus` | 运行时：经验证的 `read` |
+| `anda_brain_wiki_search` | wiki 查询、过滤条件和结果上限 | `WikiSearchOutput` | `read` |
+| `anda_brain_wiki_read` | 文档 ID 和读取选择器 | `WikiReadOutput` | `read` |
+| `anda_brain_wiki_commit` | 文档字段和完整 Markdown 内容 | `WikiCommitOutput` | `write` |
+| `anda_brain_wiki_verify` | citation URI 或显式引用字段 | `WikiVerifyOutput` | `read` |
+
+MCP 只读 KIP 工具使用 `commands`，并为批量读取补上 independent 执行模式。HTTP `/execute_kip_readonly` 使用 `operations`，批量请求须显式提供 `execution.mode`。Wiki MCP 工具在启用 `wiki` feature 时提供；服务二进制始终启用该 feature。三个运行时工具遵循[运行时接口](#authenticated-runtime-inbox-and-observations)的规则；观察者写入从不作为模型工具提供。所有工具 schema 都不使用 `oneOf`、`anyOf` 或 `allOf`：备选类型写成类型列表，带标签的变体写成一个带 `enum` 判别字段的对象，跨字段规则在解析参数时检查。
+
+当设置了 `ED25519_PUBKEYS` 时，远程 MCP 客户端需要携带 `Authorization` bearer token；stdio 模式请通过 `MCP_AUTH_TOKEN` 或 `--mcp-auth-token` 配置 CWT 或 space token。`read` 工具也可无 token 访问 public space。远程 MCP 经过公司域名或反向代理暴露时，请设置 `MCP_HTTP_ALLOWED_HOSTS`（浏览器客户端还需 `MCP_HTTP_ALLOWED_ORIGINS`）。本地 stdio 开发可用 `--mcp-auto-create-space` 自动创建目标 space；远程开发可用 `MCP_HTTP_AUTO_CREATE_SPACE=true`，但在远程自动创建不存在的 space 前，必须配置好 `ED25519_PUBKEYS`，且客户端需提供该 space 拥有 `write` 范围的 CWT。
+
+---
+
+## 6) 错误语义
+
+- 认证失败：HTTP `401`，响应体为 `RpcError`
+- 参数错误：HTTP `400`，响应体为 `RpcError`；`RpcError.message` 为可读的纯文本，而非带引号的调试格式
+- 无权访问：HTTP `403`；空间或 wiki 文档不存在：HTTP `404`
+- Wiki 提交冲突：HTTP `409`，当前版本位于 `RpcError.data.current_version`；wiki 内容超限：HTTP `413`
+- 模型请求限流：HTTP `429`；全局 HTTP 限流：HTTP `503`。这些中间件响应是纯文本。
+- 成功时：HTTP `200`，响应体通常为 `RpcResponse<T>`
+- 处理器错误即使在 `Accept` 请求 CBOR 或 Markdown 时也返回 JSON；未匹配路由和中间件错误可能是纯文本或空响应体。只有成功响应体遵循 `Accept`。
+- KIP 请求可能返回 HTTP `200`，但 `KipResponse.status` 或某项操作的 `status` 为 `failed`；必须检查两层 KIP 状态。
+- MCP 工具沿用同一分类：调用方可修复的失败以 JSON-RPC `invalid_params`/`invalid_request` 返回（wiki 提交冲突携带与 HTTP `409` 相同的 `data.current_version` 重试载荷），只有真正的内部错误才用 `internal_error`
+
+---
+
+## 7) TypeScript 类型定义
 
 ```ts
 export type TokenScope = 'read' | 'write' | '*';
@@ -1007,483 +1734,7 @@ export interface KipResponse<T> {
 
 ---
 
-## 3) MCP Server
-
-默认情况下，HTTP 服务会暴露支持流式传输的 HTTP MCP 端点；`MCP_HTTP_ENABLED=false` 可关闭它：
-
-```text
-https://your-brain-host/mcp/my_space_001
-```
-
-Client 通过 URL path 选择目标记忆空间，并使用与 REST 相同的 CWT 或 space token：`Authorization: Bearer <token>`。这适合公司内部多用户智能体平台：为每位员工分配一个 Brain space，员工的智能体通过 MCP 连接自己的空间。
-
-Anda Brain 也可作为本地 MCP stdio server 运行：
-
-```bash
-MCP_AUTH_TOKEN="$SPACE_TOKEN" \
-  anda_brain mcp --space-id my_space_001 local --db ./data
-```
-
-两种 MCP 模式都复用 HTTP 服务的模型、认证和存储配置。stdio 模式的嵌套 storage 子命令可省略（内存开发模式），也可以使用 `local --db ./data` 持久化到本地，或使用 `aws --bucket ... --region ...` 连接 S3。
-
-| Tool | Input | Output | Scope |
-| ---- | ----- | ------ | ----- |
-| `anda_brain_memory` | `{ request: MemoryRequest }` | `MemoryResponse` | recall 为 `read`；变更类为 `write` |
-| `anda_brain_stage_memory_source` | `StageSourceInput` | `StagedSourceRef` | `write` |
-| `anda_brain_memory_receipt` | `{ receipt_ref }` | `{ receipt, progress, result, warnings }` | `read` 凭据 |
-| `anda_brain_remember_conversation` | `FormationInput` 形状（`messages`, `context`, `timestamp`） | `AgentOutput` | `write` |
-| `anda_brain_recall_memory` | `RecallInput` 形状（`query`, `context`，可选 `budget`） | `AgentOutput` | `read` |
-| `anda_brain_run_maintenance` | `MaintenanceInput` 形状 | `AgentOutput` | `write` |
-| `anda_brain_get_space_info` | 无 | `SpaceInfo` | `read` |
-| `anda_brain_get_formation_status` | 无 | `FormationStatus` | `read` |
-| `anda_brain_execute_kip_readonly` | `{ command?, commands?, parameters?, dry_run? }` | `KipResponse` | `read` |
-| `anda_brain_get_or_init_user` | `{ user, name? }` | `Concept` | `write` |
-| `anda_brain_list_conversations` | `{ collection?, cursor?, limit? }` | `{ conversations, next_cursor }` | `read` |
-| `anda_brain_get_conversation` | `{ conversation_id, collection?, delta?, messages_offset?, artifacts_offset? }` | `Conversation` 或 `ConversationDelta` | `read` |
-| `anda_brain_wiki_search` | wiki 查询、过滤条件和结果上限 | `WikiSearchOutput` | `read` |
-| `anda_brain_wiki_read` | 文档 ID 和读取选择器 | `WikiReadOutput` | `read` |
-| `anda_brain_wiki_commit` | 文档字段和完整 Markdown 内容 | `WikiCommitOutput` | `write` |
-| `anda_brain_wiki_verify` | citation URI 或显式引用字段 | `WikiVerifyOutput` | `read` |
-
-MCP 只读 KIP 工具使用 `commands`，并为批量读取补上 independent 执行模式。HTTP `/execute_kip_readonly` 使用 `operations`，批量请求须显式提供 `execution.mode`。Wiki MCP 工具在启用 `wiki` feature 时提供；服务二进制始终启用该 feature。
-
-当设置了 `ED25519_PUBKEYS` 时，远程 MCP 客户端需要携带 `Authorization` bearer token；stdio 模式请通过 `MCP_AUTH_TOKEN` 或 `--mcp-auth-token` 配置 CWT 或 space token。`read` 工具也可无 token 访问 public space。远程 MCP 经过公司域名或反向代理暴露时，请设置 `MCP_HTTP_ALLOWED_HOSTS`。本地 stdio 开发可用 `--mcp-auto-create-space` 自动创建目标 space；远程开发可用 `MCP_HTTP_AUTO_CREATE_SPACE=true`，但在远程自动创建不存在的 space 前，必须配置好 `ED25519_PUBKEYS`，且客户端需提供该 space 拥有 `write` 范围的 CWT。
-
----
-
-## 4) 接口列表
-
-## 4.1 公共接口
-
-### GET `/favicon.ico` 和 GET `/apple-touch-icon.webp`
-
-- 说明：产品图标静态资源
-- 鉴权：无
-- 响应：`image/x-icon` 或 `image/webp`
-
-### GET `/info`
-
-- 说明：服务信息
-- 鉴权：无
-- 响应（JSON）：`ServiceInfo`
-
-### GET `/SKILL.md`
-
-- 说明：返回技能描述 Markdown
-- 鉴权：无
-- 响应：`text/markdown`
-
----
-
-## 4.2 空间业务接口（`/v1/{space_id}`）
-
-### POST `/v1/{space_id}/formation`
-
-- 作用：提交记忆写入任务
-- 鉴权：SpaceToken/CWT `write`
-- 请求体：`FormationInput`（Markdown 模式下也允许原始字符串）
-- 观察时间接受任意时区偏移、最多毫秒精度的 RFC 3339 时刻，规范为 `YYYY-MM-DDTHH:mm:ss.SSSZ`；无法解析或精度超过毫秒的值直接拒绝（400），不会被替换。缺省时使用已保存的会话创建时间，重试沿用同一回退时间。消息自带的 `timestamp`（Unix 毫秒）是该条消息的观察时间。Formation 按所引用消息的观察时间写入每条主张的 `asserted_at`，而不是 Formation 运行的时间（KIP Spec §13.2）。Markdown 原文按一条 user 消息原样捕获，同样提供 `:msg1` Evidence 绑定。
-- 响应（JSON/CBOR）：`RpcResponse<AgentOutput>`
-- 响应（Markdown）：`string`（仅返回 `AgentOutput.content`）
-
-### POST `/v1/{space_id}/recall`
-
-- 作用：按自然语言召回记忆
-- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权，私有空间需有效 token）。带标签限制的 space token 会收到 `403`，因为 agentic Recall 可跨所有 wiki 标签读取。
-- 请求体：`RecallInput`（Markdown 模式下也允许原始字符串）
-- 响应（JSON/CBOR）：`RpcResponse<AgentOutput>`
-- 响应（Markdown）：纯文本 `AgentOutput.content`
-
-### POST `/v1/{space_id}/recall_structured`
-
-- 作用：返回合成答案、从检索轨迹提取的记忆引用、`found` 和可选不确定性。
-- 鉴权和请求体：同 `/recall`；带标签限制的 token 返回 `403`。
-- 响应（JSON/CBOR）：`RpcResponse<RecallOutput>`
-- 响应（Markdown）：纯文本 `RecallOutput.answer`
-
-<a id="recall-budget-contract"></a>
-
-### Recall 预算合同
-
-可选 `budget` 启用宿主选择的 JSON 记忆包，放在 `content` 中，替代自由生成的答案。
-`memory_policy.recall_budget` 可对所有 Recall 强制同一上限；请求只能收紧，不能提高或
-关闭策略。策略和请求均省略/null 时保持旧行为。
-
-每次请求先按当前问题执行有界、参数化的概念搜索。只有未完成的承诺（`pending`/`blocked`）
-作为必需项；已结束承诺作为可选历史候选。返回的紧凑记录保留 ID、版本和来源，省略重复的
-LegacyRecord 原文，并在 `recall_detail` 中列出省略字段。必需属性和原生程序检查不会被
-摘要掉。完整 Primer 仍进入规划上下文，交付包仅带紧凑的执行依据；需要详情时可用 KQL
-字段投影读取。
-
-可选候选逐条装包；`coverage.partial`、`coverage.omitted` 明示不完整交付。累计模型输入
-预算耗尽时，宿主仍可返回已授权读取的候选，同时附上必需警告 `recall_context_budget_exhausted`。
-这类响应是局部 `bounded` 包，不是模型合成答案或相关性证明。必需读取不完整，或输出预算
-连完整约束和警告都容纳不了时，仍返回 `budget_insufficient`；提供方调用失败也仍按失败处理。
-
-固定 codec 对 compact JSON 记忆包全文计数，含转义和 coverage；`context_tokens`
-另行限制本次 Recall 所有规划输入规范序列化的累计 token。提供商消息模板、计费和
-RPC/MCP 传输副本不属于这些范围。不根据模型名猜编码，也不回退字符数估算。
-预算响应不会附带历史、thoughts、artifacts 或工具调用作为记忆旁路。
-
-`recall_structured` 将同一包放在 `answer`，不从完整 trace 另外复制 citations，并增加
-`memory_budget`：`tokenizer`、`token_limit`、`tokens`、`context_token_limit`；此模式的
-`found` 仅表示交付了非 Primer 候选，不表示已证明语义相关或完整。Markdown 返回同一
-包文本。`budget_insufficient` 或带静态 `failed_reason` 的字面量 `null` 表示不可用/
-不充分，不能当成成功的空答案。预算允许时，包内可选的 `failed_reason` 字段携带同一
-固定错误代码，用于区分模型调用失败和 token 预算耗尽；该字段计入包的 token 总数，
-不会交付提供方的原始错误内容。预算失败使用固定代码：`recall_output_budget_exhausted`、
-`recall_required_read_incomplete`、`recall_context_budget_exhausted`、
-`recall_deadline_reached`、`recall_model_unavailable`、
-`recall_planner_incomplete` 或 `recall_procedure_window_incomplete`。
-记忆包始终是候选读取（`semantic_complete=false`、`action_ready=false`）。
-必要约束和警告作为整体保留；无法容纳时不交付普通记忆，不用估算或自由答案绕过预算。
-
-### POST `/v1/{space_id}/maintenance`
-
-- 作用：触发维护（睡眠/整理）
-- 鉴权：SpaceToken/CWT `write`
-- 请求体：`MaintenanceInput`
-- 响应：`RpcResponse<AgentOutput>`
-
-`parameters` 中明确提供的值覆盖空间策略；省略项使用空间策略的默认值。同一份有效参数同时用于确定性 settlement 和维护模型，不修改持久化的空间策略。
-
-### POST `/v1/{space_id}/memory/pin`
-
-- 作用：固定或取消固定一个图谱实体（`pinned` 保留类别，不参与保留期归档）。
-- 鉴权：SpaceToken/CWT `write`
-- 请求体：`MemoryPinInput`；`pinned` 默认 `true`。
-- 响应：`RpcResponse<MemoryPinOutput>`
-
-### POST `/v1/{space_id}/memory/forget`
-
-- 作用：物理删除图谱实体；删除前可用 `dry_run: true` 检查影响。
-- 鉴权：SpaceToken/CWT `write`
-- 请求体：`MemoryForgetInput`；`dry_run` 默认 `false`。
-- 响应：`RpcResponse<MemoryForgetReport>`；单个实体的错误位于 `result.entities`。
-
-接受显式的 Concept（`C-*`）、Proposition（`P-*`）、Assertion（`A-*`）、Evidence（`E-*`）和 Activity（`X-*`）ID，包括保存消息原文的 Evidence。原生 legal hold 和引用检查仍然生效，成功清除后保留已擦除身份桩。计数分别报告各类被清除记录，包含级联删除。此操作清除所选图谱记录；已保存的会话、wiki 文档及外部副本各有独立生命周期。
-引用已清除元素的产品预览会在报告成功前清理；预览清理失败会写入该实体的错误字段。
-
-### GET `/v1/{space_id}/memory/attention`
-
-- 作用：注意力召回（KIP Memory Interface §4）：返回调用方所保存游标之后，已触发的 Watch 与 settlement 判定到期的 Commitment。
-- 鉴权：SpaceToken/CWT `read`；公开空间允许匿名读取。
-- 查询参数：`AttentionRecallInput`——`attention_cursor`（可选）、`limit`（1–50 个条目，默认 20）。
-- 响应：`RpcResponse<AttentionRecall>`，保持 JSON/CBOR/Markdown 协商。游标或 limit 无效返回 400。
-
-```ts
-export interface AttentionRecallInput {
-  attention_cursor?: string; // 不透明；缺省、"attention:start" 或旧的 "attention:-1" 表示从第一次提起开始
-  limit?: number; // 1–50 个条目；默认 20
-}
-
-export interface AttentionRecall {
-  items: AttentionItem[]; // 按 (raised_seq, ref) 排序
-  // 最后交付的位置：页面停在一次提交中间时为 "attention:<seq>:<ref>"；该次提交及之前的
-  // 条目全部交付时为 "attention:<seq>"；没有新条目时为输入游标（或 "attention:start"）
-  attention_cursor: string;
-  complete: boolean; // 输入游标之后的所有提起是否都已读完
-}
-
-export interface AttentionItem {
-  ref: string; // 被提起的 Watch 或 Commitment
-  kind: 'watch_fired' | 'commitment_due';
-  summary: string;
-  raised_seq: number; // watch_fire / commitment_review Activity 的 space_seq
-  due_at?: string;
-  target_refs: string[]; // Watch 的 `watches` 目标，或该 Commitment
-  priority?: number;
-}
-```
-
-每个条目都由一次提交提起：`watch_fire` Activity，或指名某个到期 Commitment 的 `commitment_review` Activity。settlement 为每个到期、状态为 `pending`/`blocked` 且没有 Watch 的 Commitment 原生写一条这样的 Activity，键为 `commitment_review:<commitment id>:<due_at>`（Profile §17）：重放不会再次提起，只有新的 `due_at` 才会再次提起；Commitment 的状态不变。一次提交可以提起多个条目，页面可以停在它们中间，下一页从最后交付的条目之后继续。读取不改变记忆，游标不会过期，调用方取走条目后自行保存。条目不授予任何权限：据此行动仍须经过 action gate 与 Governance。它与有身份的运行时收件箱（`GET /v1/{space_id}/attention`，按 action gate 的 wake 记录分页）相互独立。
-
-### GET `/v1/{space_id}/schema/drafts`
-
-- 作用：本空间的草稿词汇（KIP §20.16）：Formation 用 `DEFINE`（或已弃用的 `declare_memory_symbols`）起草的每个符号、其定义，以及晋升后所并入的谱系。
-- 鉴权：SpaceToken/CWT `read`；公开空间允许匿名读取。
-- 响应：`RpcResponse<SchemaDrafts>`。
-
-```ts
-export interface SchemaDrafts {
-  package_ref: 'kip://local/draft@0.0.0';
-  schema_environment_version: number;
-  symbols: DraftSymbol[];
-}
-
-export interface DraftSymbol {
-  kind: 'ConceptType' | 'PredicateType';
-  name: string;
-  ref: string; // kip://local/draft@0.0.0/<name>；元素永久保留这个引用
-  definition: object; // 起草时的定义
-  promoted_to?: string; // 晋升目标谱系，如 kip://profiles/cognitive-memory/Person
-}
-```
-
-每个新草稿排一个 `review_schema` SleepTask，键为 `review_schema:<kind>:<ref>`（带 `symbol_kind` / `symbol_ref` 属性）。Maintenance 审阅它，可以在总结里提议晋升，但从不定义或晋升符号。Formation 定义符号的请求只能包含 `DEFINE`（最多 8 个），名称与定义体必须是字面量并符合本部署的命名形状；每个空间自有符号最多 512 个。
-
-### POST `/v1/{space_id}/schema/promote`
-
-- 作用：把一个草稿符号晋升到已安装包中同类别的符号（KIP §20.16）。这是 Schema 迁移：草稿下写入的元素保留原有的 `schema_ref` / `predicate_ref`，从新的 Schema Environment 版本起，类型与谓词匹配把两条谱系视为一条。每个草稿至多晋升一次，从不隐式晋升。
-- 鉴权：管理 CWT `write`（代表 `manage_schema`）；Space token 不能晋升。
-- 请求体：`{kind: 'ConceptType' | 'PredicateType', from: string, to: string}`——`from` 是草稿的本地名或确切引用，`to` 是已安装符号的确切引用或无歧义的本地名。
-- 响应：`RpcResponse<{promoted: string, to: string, schema_environment_version: number}>`。草稿不存在、类别不符、目标无法解析或重复晋升均返回 400。
-
-### GET `/v1/{space_id}/memory_status`
-
-- 用途：读取记忆统计和最近一次维护报告。
-- 鉴权：SpaceToken/CWT `read`；公开空间允许匿名读取。
-- 响应：`RpcResponse<MemoryStatus>`，保持 JSON/CBOR/Markdown 协商。
-- `result.last_settlement.correction_scan_incomplete`：本次有界扫描尚未证明 backlog 已耗尽，后续维护会从事务内部继续。
-- `result.last_settlement.correction_scan_through_seq`：已完整读取的最大事务序号。
-- `result.last_settlement.correction_scan_error`：扫描失败原因；失败不会推进游标。
-- 这些字段表示更正发现进度，不表示模型完成审查或 Watch 获得完整授权覆盖。
-
-### POST `/v1/{space_id}/execute_kip_readonly`
-
-- 作用：执行 KIP 请求（只读模式，适用于查询）
-- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权，私有空间需有效 token）
-- 请求体：`KipRequest`，或直接一个 JSON 字符串（按单条命令解析）
-- 若 `operations` 超过一项，必须提供 `execution.mode`；即使 HTTP 返回 `200`，也要检查顶层 `status` 和每个 `results[].status`。
-- 响应：`KipResponse<T>`（结果类型随命令而定）
-- 只读由命令**解析出的语义**决定：无论请求怎么标注，KML 变更都会在这里被拒绝
-
-### POST `/v1/{space_id}/get_or_init_user`
-
-- 作用：按给定 principal 获取或初始化用户 Concept 节点
-- 鉴权：SpaceToken/CWT `write`
-- 请求体：`GetOrInitUserInput`
-- 省略 `name` 时保留已有显示名；显式提供 `name` 时更新显示名。首次创建且未提供姓名时，使用 key 作为初始显示名。
-- 响应：`RpcResponse<Concept>`
-
-### GET `/v1/{space_id}/info`
-
-- 作用：获取空间状态和统计
-- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权，私有空间需有效 token）
-- 响应：`RpcResponse<SpaceInfo>`
-
-### GET `/v1/{space_id}/status`
-
-- `/v1/{space_id}/info` 的别名，鉴权和响应相同。
-
-### POST `/v1/{space_id}/probe`
-
-- 作用：无需模型的检索可达性检查；`found:false` 不代表信念被否定。
-- 鉴权：沿用 Space 的 `read` 权限和公开空间读取规则。
-- 请求：`{"query":"...", "limit":8}`。
-- 响应：`RpcResponse<ProbeOutput>`，含 `found`、`negative_cached`、可选 `hits` 和可选 `search_exhaustive`。后者来自 SEARCH result 顶层覆盖字段；缺省表示未知，有剩余分页时为 false。负缓存仅保存明确穷尽的检索 miss，不能作为不存在或信念被否定的证明。
-
-### GET `/v1/{space_id}/formation_status`
-
-- 作用：获取记忆写入状态（更轻量级的接口，专门用于监控记忆写入进度）
-- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权，私有空间需有效 token）
-- 响应：`RpcResponse<FormationStatus>`
-- 此接口是轻量监控，游标不是逐任务成功证明。Rust 宿主可用 `Space::processing_report` / `wait_for_processing` 区分排队、运行、失败、取消、中断和超时；超时后继续核对同一 conversation ID，不重新提交。
-
-### GET `/v1/{space_id}/conversations/{conversation_id}?collection=<collection>`
-
-- 作用：获取单条会话详情
-- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权，私有空间需有效 token）；带 ACL 标签限制的 token 返回 `403`——会话持久化了完整的 agent 运行历史，不受标签过滤；`collection=recall` 对公开空间的匿名访问也返回 `403`（私有期的 recall 运行可能内嵌 labeled wiki 内容）
-- Query:
-  - `collection?: string` // "formation"（默认）、"recall" 或 "maintenance"；未知值返回 `400`
-- 响应：`RpcResponse<Conversation>`
-
-### GET `/v1/{space_id}/conversations/{conversation_id}/delta?collection=<collection>&messages_offset=<n>&artifacts_offset=<n>`
-
-- 作用：按客户端已消费的 offset 获取会话增量更新
-- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权，私有空间需有效 token）；带 ACL 标签限制的 token 返回 `403`（`collection=recall`：公开空间匿名访问同样拒绝）
-- Query:
-  - `collection?: string` // "formation"（默认）、"recall" 或 "maintenance"；未知值返回 `400`
-  - `messages_offset?: number` // 仅返回该偏移量之后的新消息，默认 `0`
-  - `artifacts_offset?: number` // 仅返回该偏移量之后的新 artifacts，默认 `0`
-- 响应：`RpcResponse<ConversationDelta>`
-
-### GET `/v1/{space_id}/conversations?collection=<collection>&cursor=<cursor>&limit=<n>`
-
-- 作用：分页列出会话
-- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权，私有空间需有效 token）；带 ACL 标签限制的 token 返回 `403`（`collection=recall`：公开空间匿名访问同样拒绝）
-- Query:
-  - `collection?: string` // "formation"（默认）、"recall" 或 "maintenance"；未知值返回 `400`
-  - `cursor?: string`
-  - `limit?: number`
-- 响应：`RpcResponse<Conversation[]>`（并通过 `next_cursor` 给出下一页游标）
-
----
-
-## 4.3 Wiki 接口（`/v1/{space_id}/wiki`）
-
-Wiki 是空间的版本化参考记忆（政策、手册、SOP、API 文档）。写入是 Git 式不可变提交（CAS 并发控制）；检索返回可校验的 `wiki://` 引用。ACL：文档可携带 `acl_label`；带 `labels` 的 space token 仅可见无标签内容 + 所授标签——查询预过滤后仍核对文档当前版本、状态和权限。权限检查与版本选择共享同一文档快照。公开空间的匿名读者仅可见无标签内容；越权一律表现为 404。
-
-Wiki 专属错误语义：`409` 提交冲突（`RpcError.data.current_version` 为应 rebase 的版本）、`413` 内容超 1 MiB、`404` 不存在或 ACL 拒绝。
-
-目录由 Markdown 的 ATX 标题（`#`–`######`）生成，独立于检索分块；读取 section 包含该标题的子章节。锚点按标题派生，同名标题加序号。`full`、`range` 和 `section` 均最多返回 256 KiB；`truncated` 为 true 时，使用返回的 `byte_range` 继续读取。历史和引用校验只接受已发布 parent 链中的版本，失败提交的残留不是历史。
-
-OKF 导入按完整文件替换 title、tags、resource、type 和未知 frontmatter 键值，删除字段会清空对应导入状态；已有 ACL 与其他宿主 metadata 保留。标题或标签经 commit 修改后，导出仍保留未知键值。YAML 使用标准解析和序列化，不承诺注释或原始排版保真。
-
-WikiDigest 默认关闭。开启后，commit、archive、restore 和 ACL 变化持久化文档待处理标记；每轮最多处理 20 个文档，启动、维护后或显式调用时推进，失败文档保留待重试。正文校验和未变时复用已有账本，不再调用模型。提取漏项不是撤回依据：对旧断言必须在每个正文批次中明确核验为 `absent`，缺失、重复或 `unknown` 判断均保留原断言。归档或加标签由后续 digest 撤回本来源断言；该图谱同步是异步的。模型处理中发生文档变更时，不发布旧结果，保留新一代待处理标记。观测高水位 `wiki_digested` 不表示队列已经清空。
-
-
-### POST `/v1/{space_id}/wiki/docs`
-
-- 作用：提交文档（创建；或携带 `doc_id` + `parent_version` 做 CAS 更新）；同内容提交为零写入
-- 鉴权：SpaceToken/CWT `write`
-- 请求体：`WikiCommitInput`（也接受原始 Markdown 字符串，标题取首个标题行）
-- 响应：`RpcResponse<WikiCommitOutput>`
-
-### GET `/v1/{space_id}/wiki/docs?namespace=<ns>&status=<status>&tag=<tag>&cursor=<cursor>&limit=<n>`
-
-- 作用：分页列出文档
-- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权；ACL 标签生效）
-- 响应：`RpcResponse<WikiDocInfo[]>`（下一页游标经 `next_cursor` 返回）
-
-### GET `/v1/{space_id}/wiki/docs/{doc_id}`
-
-- 作用：文档元信息 + 目录（TOC）
-- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权；ACL 标签生效）
-- 响应：`RpcResponse<{ doc: WikiDocInfo; toc: WikiTocEntry[] }>`
-
-### GET `/v1/{space_id}/wiki/docs/{doc_id}/content?version=<id>&anchor=<anchor>&start=<n>&end=<n>`
-
-- 作用：渐进读取——`anchor` 读单节、`start`+`end` 读字节区间、均不传读受限全文；`version` 读历史版本
-- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权；ACL 标签生效）
-- 响应：`RpcResponse<WikiReadOutput>`
-
-### GET `/v1/{space_id}/wiki/docs/{doc_id}/versions?cursor=<cursor>&limit=<n>`
-
-- 作用：版本历史（不可变提交链）
-- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权；ACL 标签生效）
-- 响应：`RpcResponse<WikiVersionInfo[]>`（下一页游标经 `next_cursor` 返回）
-
-### POST `/v1/{space_id}/wiki/docs/{doc_id}/archive`
-
-- 作用：归档文档（退出检索，仍可按 id 读取，可恢复）
-- 鉴权：SpaceToken/CWT `write`
-- 响应：`RpcResponse<WikiDocInfo>`
-
-### POST `/v1/{space_id}/wiki/docs/{doc_id}/restore`
-
-- 作用：恢复归档文档进入检索
-- 鉴权：SpaceToken/CWT `write`
-- 响应：`RpcResponse<WikiDocInfo>`
-
-### POST `/v1/{space_id}/wiki/search`
-
-- 作用：BM25 关键词检索，返回片段与可校验引用
-- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权；ACL 标签生效）
-- 请求体：`WikiSearchInput`（也接受原始查询字符串）
-- 响应：`RpcResponse<WikiSearchOutput>`
-
-### POST `/v1/{space_id}/wiki/verify`
-
-- 作用：对照不可变存储校验引用
-- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权；ACL 标签生效）
-- 请求体：`WikiVerifyInput`（也接受原始 `wiki://` URI 字符串）
-- 响应：`RpcResponse<WikiVerifyOutput>`
-
-### GET `/v1/{space_id}/wiki/events?kind=<kind>&doc_id=<id>&cursor=<cursor>&limit=<n>`
-
-- 作用：查询 append-only 审计日志（写入、导入、蒸馏；开启 `wiki_audit_reads` 后含读操作）
-- 鉴权：SpaceToken/CWT `read`；受 ACL 标签限制的 token 返回 `403`
-- 响应：`RpcResponse<WikiEventInfo[]>`（下一页游标经 `next_cursor` 返回）
-
-### POST `/v1/{space_id}/wiki/import`
-
-- 作用：导入 OKF v0.1 bundle；checksum 幂等（重复导入零版本膨胀）；未知 frontmatter 键值按结构保留；YAML 注释、字段顺序及标量排版不保留
-- 鉴权：SpaceToken/CWT `*`（全量 scope）
-- 请求体：`WikiImportInput`
-- 响应：`RpcResponse<WikiImportOutput>`
-
-### GET `/v1/{space_id}/wiki/export?namespace=<ns>`
-
-- 作用：按 namespace 导出 OKF bundle（concept `.md` + `index.md` + 含校验和的 `manifest.json`）；可在空库完整重放
-- 鉴权：SpaceToken/CWT `*`（全量 scope）
-- 响应：`RpcResponse<WikiExportOutput>`
-
-### POST `/v1/{space_id}/wiki/digest`
-
-- 作用：把待处理 wiki 版本蒸馏进 Cognitive Nexus（每条事实写成 Proposition + 归属于 Brain 的 Assertion，并引用对应段落作为 Evidence）；经完整正文批次明确核验不再支持的旧断言，digest 撤回自己的 Assertion；漏提取或未知判断不会触发撤回，Proposition 与他人的 Assertion 不受影响（需先 `update_space {"wiki_digest": true}` 开启）
-- 鉴权：SpaceToken/CWT `write`
-- 响应：`RpcResponse<WikiDigestReport>`
-
----
-
-## 4.4 空间管理接口（`/v1/{space_id}/management`）
-
-### GET `/v1/{space_id}/management/space_tokens`
-
-- 作用：列出 Space Token
-- 鉴权：必须通过 CWT `write`（用户管理级鉴权）
-- 响应：`RpcResponse<SpaceToken[]>` —— `token` 字段仅显示前缀（如 `STabc123…`）；完整 token 值只在 `add_space_token` 响应中出现一次，铸造时务必保存，或后续凭 `name` 吊销
-
-### POST `/v1/{space_id}/management/add_space_token`
-
-- 作用：新增 Space Token
-- 鉴权：必须通过 CWT `write`（用户管理级鉴权）。铸造 `*`（全 scope）token 需要 `*` scope 的 CWT——`write` CWT 不能铸造高于自身 scope 的 token
-- 请求体：`AddSpaceTokenInput` —— `name` 必填且空间内唯一。仅 `read` token 可设置 `labels`；`[]` 表示仅可读无标签 wiki 内容，省略表示不受标签限制。
-- 响应：`RpcResponse<SpaceToken>`（新 token，前缀总是 `ST`；这是唯一携带完整 token 值的响应）
-
-### POST `/v1/{space_id}/management/revoke_space_token`
-
-- 作用：吊销 Space Token
-- 鉴权：必须通过 CWT `write`（用户管理级鉴权）
-- 请求体：`RevokeSpaceTokenInput` —— 传 `token`（完整 token 值）或 `name`（唯一 token 名称，供未保存 token 值的管理者使用）
-- 响应：`RpcResponse<boolean>`（是否成功吊销）
-
-### PATCH `/v1/{space_id}/management/update_space`
-
-- 作用：更新空间信息、wiki 设置及可选的 `memory_policy`（校验后作为新策略持久化）。
-- 鉴权：必须通过 CWT `write`（用户管理级鉴权）
-- 请求体：`UpdateSpaceInput`
-- 响应：`RpcResponse<true>`
-
-### POST `/v1/{space_id}/management/shadow_eval`
-
-- 作用：在空间副本上重放近期 Recall，对比候选记忆策略和当前策略；可能产生多次模型调用。
-- 鉴权：CWT `write`（不接受 space token）。
-- 请求体：`ShadowEvalInput`；`replay_sample` 默认采用空间策略，上限为 `16`。
-- 响应：`RpcResponse<ShadowReport>`
-
-### PATCH `/v1/{space_id}/management/restart_formation`
-
-- 作用：通过会话 ID 重启记忆写入任务（用于失败/过期的写入任务）
-- 鉴权：必须通过 CWT `write`（用户管理级鉴权）
-- 请求体：`FormationRestartInput`
-- 响应：`RpcResponse<true>`
-
-### GET `/v1/{space_id}/management/space_byok`
-
-- 作用：获取 BYOK（Bring Your Own Key）配置，即使用自定义模型配置
-- 鉴权：必须通过 CWT `write`（用户管理级鉴权；响应包含模型供应商凭据）
-- 响应：`RpcResponse<ModelConfig>`
-
-### PATCH `/v1/{space_id}/management/space_byok`
-
-- 作用：更新 BYOK（Bring Your Own Key）配置，即使用自定义模型配置
-- 鉴权：必须通过 CWT `write`（用户管理级鉴权）
-- 请求体：`ModelConfig`
-- 响应：`RpcResponse<true>`
-
----
-
-## 4.5 管理员接口（`/admin`）
-
-### POST `/admin/create_space`
-
-- 作用：创建空间
-- 鉴权：平台管理员 + CWT `write`
-- 请求体：`CreateOrUpdateSpaceInput`
-- 响应：`RpcResponse<SpaceInfo>`
-
-### POST `/admin/{space_id}/update_space_tier`
-
-- 作用：更新空间 tier
-- 鉴权：平台管理员 + CWT `write`
-- 请求体：`CreateOrUpdateSpaceInput`
-- 响应：`RpcResponse<SpaceTier>`
-
----
-
-## 5) 前端调用示例（TS）
+## 8) 前端调用示例（TS）
 
 ```ts
 async function rpcPost<TReq, TRes>(
@@ -1529,41 +1780,39 @@ if (recall.error) {
 
 ---
 
-## 6) 错误语义
+## 9) Rust 宿主接口
 
-- 认证失败：HTTP `401`，响应体为 `RpcError`
-- 参数错误：HTTP `400`，响应体为 `RpcError`；`RpcError.message` 为可读的纯文本，而非带引号的调试格式
-- 无权访问：HTTP `403`；空间或 wiki 文档不存在：HTTP `404`
-- Wiki 提交冲突：HTTP `409`，当前版本位于 `RpcError.data.current_version`；wiki 内容超限：HTTP `413`
-- 模型请求限流：HTTP `429`；全局 HTTP 限流：HTTP `503`。这些中间件响应是纯文本。
-- 成功时：HTTP `200`，响应体通常为 `RpcResponse<T>`
-- 处理器错误即使在 `Accept` 请求 CBOR 或 Markdown 时也返回 JSON；未匹配路由和中间件错误可能是纯文本或空响应体。只有成功响应体遵循 `Accept`。
-- KIP 请求可能返回 HTTP `200`，但 `KipResponse.status` 或某项操作的 `status` 为 `failed`；必须检查两层 KIP 状态。
-- MCP 工具沿用同一分类：调用方可修复的失败以 JSON-RPC `invalid_params`/`invalid_request` 返回（wiki 提交冲突携带与 HTTP `409` 相同的 `data.current_version` 重试载荷），只有真正的内部错误才用 `internal_error`
+以下是供嵌入宿主使用的受信 Rust 接口，不新增 HTTP 或 MCP 路由，也不授予模型任何权限。
 
+<a id="trusted-host-memory-product-contracts"></a>
 
-### 隔离的 MIB 宿主
+### 9.1 可信宿主记忆产品合同
 
-相邻 Anda Bot 的 `mib` feature 在本机提供独立的 `/mib-agent/v0.1` 和
-`/mib-memory/v0.1` 协议；它们不属于本生产 Brain API 的路由。宿主使用
-`experiments` 实现隔离状态、完成屏障、单调业务时间和清理，详见
-[接入](README.md#mib-integration)。适配器不声明在线学习能力；
-缺少 provider 或 observer 遥测的成本仍明确标为不完整。
+Rust `product` 模块提供由 Assertion 支撑的 `MemoryRecord`、稳定修订、明确的立场/语义生命周期/存储状态，以及 Evidence 的 typed 来源引用。`Space::product_records`、`product_record`、`product_source` 不负责终端用户认证；嵌入宿主在返回记录、预览、派生 ID 或来源引用前必须检查所有者及来源权限。摘要匹配证明来源关联，不证明推断正确。
 
-Rust 工厂 `Experiment::create_with_recall_budget` 在运行对外可用前持久化强制
-Recall 预算。`audit_procedures()` 返回有界、只读的原生程序清单；截断计数不能证明
-不存在。仅 Bot MIB 的 `learning_audit` 扩展将该清单交给评测侧，不进入业务模型。
-它不启用学习，也不赋予执行权限。详见 [验证](README.md#mib-integration)。
+`Space::ingest_product` 接收有界、可信的 `SourceIdentity`，包含父会话/会话链标识，自然语言输入不能指定它。`product_prepare`、`product_commit`、`product_change`、`product_discard` 按 caller/operation 保存不可变请求，绑定修订、预览摘要及十分钟有效期。`ChangeKind` 指明变更写入哪一种历史（KIP Spec §14.2、Memory Interface §4）：
 
-已退役 Rust `anda_brain::eval` API 与 `eval` CLI（含 optimizer/miner 参数）。
-MIB 提供公开产品回归 profile；自测、shadow 诊断、probe、引用与账本继续作为线上
-工具。运行策略使用各 Space 持久化的 `MemoryPolicy`。可信 Rust 宿主可以在共享或
-打开 Space 前调用 `AppState::with_agent_prompts(AgentPrompts)` 提供不可变的部署
-段：每段以 `# A.` 开头、最多 128 KiB，编译参考前缀保持原样。这不是 HTTP/MCP
-提示操作。详见 [迁移](README.md#offline-regression-and-instance-configuration)。
+- `Correct`：调用者自己的主张写错了。新主张带用户陈述 Evidence，supersede 旧 Assertion，并保留其原有的世界时间区间（缺失的起点写成 `{latest: <原 asserted_at>}`），由 `belief_revision` Activity 记录；旧 Assertion 状态为 `superseded`。
+- `WorldChange`：世界变了。从现在起写一条新主张，时序继承结束旧值；旧值保持 `active`，仍回答它所在时段的问题。
 
+两种修订都沿用该记录的 `context_refs`（`MemoryRecord` 已暴露）：跨上下文集合的 supersession 会报 `SupersessionMismatch`（规范 §14.2）；新值若不在旧值的上下文集合里，会另起一条继承线而结束不了旧值（规范 §25.4）。
+- `Misrecorded`：Brain 记下了调用者从未说过的话。这是 recording repair，通过 Memory Interface 的 `revise` 意图（`change_kind: "misrecorded"`）执行（见 [Memory Interface](#memory-interface)）；这个按值修订的产品 API 返回 `unsupported_capability`，绝不写成更正或世界变化。
 
-### 可信学习运行时（仅 Rust）
+以上都不改写原 Concept 名称，也不伪造跨 Proposition 的 supersession。撤销是新的条件变更。
+
+`Suppress` 归档，`Delete` 清除已声明的有界集合：选定 Proposition/Assertions、引用输入及已记录的反向依赖。未知来源、Concept 级联、保留约束和超过 128 项的集合会被拒绝。写入前先持久接受来源排除与处理 epoch；原生任务不因 API 等待者取消而丢失，Space 重载开放前会恢复已接受操作。旧 Formation/Maintenance/Notes 写入被版本栅栏拦截。变更清空处理 Notes 和 miss cache、停止向新上下文注入旧处理历史，并限制自动 KIP 读取当前 active 数据；可信所有者审计接口保持独立。Recall 返回上下文前重新核对捕获的 epoch。
+
+受管理变更也会阻止预算版 Recall 注入旧历史，并在超时或轮次耗尽返回前检查处理版本。变更前开始的分页须从首页重试，变更后的分页仍可继续。删除会清理已清除内容在操作预览／更正正文中的副本，并废弃受影响的未提交意图，同时保留操作标识和摘要。若独立更正的声明及 Evidence 仍然存在，其来源正文会保留。更正来源读取会检查 Evidence 尚未清除且正文摘要一致。
+
+移除不清理宿主的原聊天、文件、日志、备份、其他独立图谱记录、已交付的上下文或服务商副本。最小来源标识与摘要用于阻止重放。用不含当前排除信息的旧备份覆盖数据库不是保留删除语义的回滚方式。宿主也必须清空自己的注入 Notes，并防止后续对话链再次导入已排除来源。
+
+`MemoryRuntime::{create_record_watch,record_watch,cancel_record_watch}` 使用不可伪造的已认证 `RuntimeCaller` 实现收件人拥有的窄范围订阅。创建持久记录身份，仅启用初始 generation；配置的控制器只获准归档该 Watch，持久标记保证不重新授予已撤销权限。取消使用原生归档，不伪造受保护运行状态；重试不重新启用。已投递的问题是独立工作，仍可见。它们是 Rust 接口，不新增通用模型工具或原生 HTTP 产品管理路由。
+
+`RuntimeConfig::validate` 静态校验不加载 Space、不运行模型、不探测业务服务、不配置授权。可选学习运行时的 `product_readiness` 表示已安装隔离工作流的准备度，区分服务缺失、身份摘要不匹配、校准未审阅及批准门槛。ready 不授予业务部署权限，每项工作的服务与原生权限检查仍必须执行。
+
+Anda Bot 通过已发布的 crate 使用这些合同，并保持 DB/KIP/Core 的单一类型身份。机制测试不证明真实学习收益或完整成本计量。
+
+### 9.2 可信学习运行时（`learning` feature）
 
 启用 `learning` feature 后，`Space::learning()` 提供显式注册、冻结 cohort、
 有界 `drive` 步骤、重启后发现工作及独立认证的 Outcome 接收。原生 lease、当前
@@ -1577,227 +1826,31 @@ MIB 提供公开产品回归 profile；自测、shadow 诊断、probe、引用�
 复制操作 journal。详见 [运行时](README.md#native-learning-contracts) 和
 [生命周期与恢复](README.md#native-learning-contracts)。
 
+### 9.3 隔离实验与 MIB 宿主（`experiments` feature）
 
-## 有身份的运行时待办与后果
+相邻 Anda Bot 的 `mib` feature 在本机提供独立的 `/mib-agent/v0.1` 和
+`/mib-memory/v0.1` 协议；它们不属于本生产 Brain API 的路由。宿主使用
+`experiments` 实现隔离状态、完成屏障、单调业务时间和清理，详见
+[接入](README.md#mib-integration)。适配器不声明在线学习能力；
+缺少 provider 或 observer 遥测的成本仍明确标为不完整。
 
-启动前配置 `BRAIN_RUNTIME_CONFIG`。完整合同、恢复及示例见 [RUNTIME_cn.md](RUNTIME_cn.md)
-和 [runtime.example.json](runtime.example.json)。公共/本地 Space 也必须提供真实凭据。
+Rust 工厂 `Experiment::create_with_recall_budget` 在运行对外可用前持久化强制
+Recall 预算。`audit_procedures()` 返回有界、只读的原生程序清单；截断计数不能证明
+不存在。仅 Bot MIB 的 `learning_audit` 扩展将该清单交给评测侧，不进入业务模型。
+它不启用学习，也不赋予执行权限。详见 [验证](README.md#mib-integration)。
 
-| 接口 | 授权 | 返回 |
-| --- | --- | --- |
-| `GET /v1/{space_id}/attention?limit=20&cursor=...` | 真实 read/* 凭据、原生主体映射和 audience | `AttentionPage`，读取不领取 |
-| `POST /v1/{space_id}/attention/{id}/responses` | 真实 write/*、当前可见性及正确接收者 | `ResponseReceipt`，body 为 `AttentionResponse` |
-| `POST /v1/{space_id}/outcomes` | 验签的观察者 CWT、当前 record_outcome 及登记合同 | `ObservationReceipt`，body 为 `OutcomeInput` |
-| `GET /v1/{space_id}/runtime/status` | 真实 read/*，配置启用时需映射 | `RuntimeStatus`，计数仅覆盖可见的有限页面 |
+### 9.4 实例配置与离线回归
 
-URL 中的 id 是返回的 wake 摘要，不是带斜杠的 wake_ref。五分钟有效的游标经加密认证，
-绑定调用者/instance/配置；跨调用者或过期游标被拒绝。公共 Space 和普通 write token
-不能认证独立观察者。MCP 暴露 get_attention、respond_attention、get_runtime_status
-（均带 anda_brain_ 前缀），观察者写入不属于模型工具。
+已退役 Rust `anda_brain::eval` API 与 `eval` CLI（含 optimizer/miner 参数）。
+MIB 提供公开产品回归 profile；自测、shadow 诊断、probe、引用与账本继续作为线上
+工具。运行策略使用各 Space 持久化的 `MemoryPolicy`。可信 Rust 宿主可以在共享或
+打开 Space 前调用 `AppState::with_agent_prompts(AgentPrompts)` 提供不可变的部署
+段：每段以 `# A.` 开头、最多 128 KiB，编译参考前缀保持原样。这不是 HTTP/MCP
+提示操作。详见 [迁移](README.md#offline-regression-and-instance-configuration)。
 
-POST 使用结构化 JSON/CBOR，响应保留 JSON/CBOR/Markdown 协商。同事件同文幂等，
-异文 409 并留存审计；未来时间或错误 instance 被拒绝。迟到/更正/安全状态、原生提交
-和 learning 入样分别报告。learning 变体必须符合原有 OutcomeMeasurements 合同，
-包括 baseline 在内均只路由到既有控制器。
+---
 
-```ts
-type RuntimeScope = { space_id: string; space_instance: string };
-type AttentionQuery = { cursor?: string | null; limit?: number | null };
-type AttentionResponse =
-  | { kind: "clarification"; event_key: string; answer: string }
-  | { kind: "agent_statement"; event_key: string; statement: string };
-type ResponseReceipt = {
-  receipt_id: string; status: string; evidence_ref: string | null;
-};
-type AttentionPage = {
-  scope: RuntimeScope; items: AttentionItem[];
-  next_cursor: string | null; complete: boolean;
-};
-type AttentionItem = {
-  id: string; wake_ref: string; parent_id: string | null;
-  watch_ref: string; fire_activity_ref: string; summary: string;
-  state: "pending" | "running" | "blocked" | "completed" | "cancelled";
-  reason: string | null; decision: Record<string, unknown> | null;
-  decision_ref: string | null; attempt_ref: string | null;
-  dispatch_ref: string | null; clarification: Record<string, unknown> | null;
-  delivery: Record<string, unknown> | null;
-};
-type OutcomeStatus = "success" | "partial" | "failure" | "aborted" | "unknown";
-type OutcomeInput = {
-  space_instance: string; attempt_ref: string;
-  observer_configuration_digest: string; event_key: string;
-  observed_at: string; metric: string; window: string;
-  observation:
-    | { kind: "measurement"; terminal: boolean; outcome_status: OutcomeStatus;
-        magnitude?: number | null; payload: unknown }
-    | { kind: "learning"; measurements: Record<string, unknown> };
-  correction_of?: string | null; safety_signal?: string | null;
-  utility?: { witness_ref?: string; witness?: ContributionWitness } | null;
-};
-type ObservationReceipt = {
-  format: "anda-brain:observation-receipt-v1";
-  receipt_id: string; scope: RuntimeScope; event_key: string;
-  body_digest: string; observer: string; received_at_ms: number;
-  observed_at: string; status: string;
-  native_committed: boolean; learning_eligible: boolean;
-  outcome_status: OutcomeStatus | null; outcome_ref: string | null;
-  observation_ref: string | null; reason: string | null; safety_pending: boolean;
-  safety_evaluation_ref?: string; // 解决或覆盖本安全信号的原生撤销记录。
-};
-type RuntimeStatus = {
-  supported: boolean; configured: boolean; scope: RuntimeScope | null;
-  attention_enabled: boolean; actions_enabled: boolean;
-  observation_enabled: boolean; observer_authenticated: boolean;
-  blocked_reasons: string[]; visible_items: number; inventory_complete: boolean;
-  utility?: UtilityStatus;
-  learning?: LearningRuntimeStatus;
-  semantic_attention?: SemanticAttentionStatus;
-  trust?: TrustRuntimeStatus;
-};
-```
-
-### 后果与回答语义
-
-待办页包含 1–50 项、最多 256 KiB 可见输出。`complete` 仅表示本次快照遍历结束，
-不表示任务完成或语义完整；每页重验可见性，包括 gate 记忆包背后的原生证据。
-MCP 回答参数为 `{id, response}`，列表参数为 `{cursor, limit}`。读取和回答均不领取
-任务；澄清回答须对应已提交 ask、正确接收者和有效期限，回答进入新 gate，不授予权限。
-`agent_statement` 只生成带归属 Evidence 和 Activity，不生成独立 OutcomeRecord。例如：
-
-```json
-{"kind":"clarification","event_key":"answer-42","answer":"明天"}
-```
-
-测量请求使用实际保留的身份与摘要：
-
-```json
-{
-  "space_instance":"sha256:INSTANCE_DIGEST",
-  "attempt_ref":"X-42",
-  "observer_configuration_digest":"sha256:REGISTERED_METHOD_DIGEST",
-  "event_key":"instrument-event-42",
-  "observed_at":"2026-09-17T10:00:00.000Z",
-  "metric":"delivery",
-  "window":"durable_inbox_v1",
-  "observation":{
-    "kind":"measurement",
-    "terminal":true,
-    "outcome_status":"success",
-    "magnitude":null,
-    "payload":{"delivery_digest":"sha256:ACTUAL_DELIVERY_REQUEST_DIGEST"}
-  },
-  "correction_of":null,
-  "safety_signal":null
-}
-```
-
-观察合同固定主体、方法/配置摘要、控制域、任务族、指标、窗口及允许延迟。接收层验证
-真实 act/Attempt、原生事务作者、已存在分派和观测时间，拒绝控制器自评。inbox 成功还
-须验证实际持久化投递及匹配的摘要/时间，仅证明 inbox 写入，不代表人已阅读或业务成功。
-其他回调须提供自己的独立测量合同。
-
-普通合格测量原子生成 Outcome Evidence 与 `outcome_observation` Activity；原始材料
-保留在 Evidence payload，不扩展封闭的 OutcomeRecord Facet。非终结/unknown 不完成
-分派，缺失 magnitude/cost 不填零。终结证据对账同一 Attempt，取消后也可保留真实后果。
-原生留证与分派对账是两个可恢复步骤；未确认写入须用相同事件/内容和新鲜认证重试。
-调用方取消不截断已接收写入。
-
-认证后的迟到、冲突及学习非终结材料可审计，不改变旧试验入样资格。更正指向同一
-观察者/Attempt 的较早事件，追加证据，不改写旧 Outcome/Evaluation。迟到或排除的
-安全信号仍可发现；显式启用的学习消费者使用当前观察者权限，在原生撤销完成后才确认
-`safety_pending` 并记录 `safety_evaluation_ref`。
-
-已登记学习 Attempt 使用 `observation:{"kind":"learning", "measurements":{...}}`。
-归属来自保留的 ticket，`trial_ref:null` 的 baseline 也不会落入普通写入器；只有
-`LearningRuntime::submit_outcome` 写原生结果，保持冻结 cutoff、可比性和 ACK 恢复。
-控制器不可用时拒绝，不转普通路径。`learning_eligible:true` 只表示合同接纳，不等于
-正向裁决。输入上限 16 KiB，事件键 256 字节；身份装配和存储上限见[运行时指南](RUNTIME_cn.md)。
-
-### 学习运行状态
-
-既有 status 路由和 MCP 工具新增 learning；模型工具不提供 cohort 报名或观察者
-凭据管理。只有明确映射的 auditor 能看到 capacity / last_pass，其他调用方为 null。
-Maintenance 的可选 skills.runtime 显示独立调度状态，旧 Skill 计数不会重复计入
-此前调度工作。详见[学习指南](LEARNING_RUNTIME_cn.md)。
-
-```typescript
-type LearningRuntimeStatus = {
-  compiled: boolean; registered: boolean; registration_enabled?: boolean;
-  bindings_ready: boolean; automatic_allowed: boolean; running?: boolean;
-  automation?: { trials: boolean; reviews: boolean; archive: boolean; safety: boolean };
-  blocked_reasons?: string[];
-  capacity?: { hot_jobs: number; maximum_hot_jobs: number; archived_jobs: number;
-    retained_identities: number; reserved_bytes: number;
-    storage: { maximum_records: number; maximum_reserved_bytes: number } } | null;
-  last_pass?: { started_at_ms: number; finished_at_ms: number; enrolled: number;
-    driven: number; observed: number; settled: number; archived: number;
-    reviews_checked: number; reviews_enrolled: number; safety_resolved: number;
-    blocked: string[] } | null;
-};
-```
-
-### 交付与效用元数据
-
-结构化 Recall 新增可选 recall_receipt 元数据，answer/语义 packet 保持不变。普通或
-直接 agent 调用可通过 conversation ID 在可信 Rust API 查询收据。观察者在 outcomes
-的 utility 中可选择内联见证或既有原生见证引用，不放宽验签与独立权限检查。
-运行状态新增 utility 的开关、校准状态及恢复原因；模型没有设置分数或新增 MCP
-变更工具。详见 [UTILITY_RUNTIME_cn.md](UTILITY_RUNTIME_cn.md)。
-
-```typescript
-type RecallReceiptRef = {
-  id: string; digest: string; scope: RuntimeScope;
-};
-// RecallOutput.recall_receipt?: RecallReceiptRef
-// OutcomeInput.utility?: { witness_ref?: string; witness?: ContributionWitness }
-// RuntimeStatus.utility?: UtilityStatus
-type UtilityStatus = {
-  configured: boolean; automatic: boolean; apply: boolean;
-  calibrated: boolean; ranking: boolean; running: boolean;
-  reason: string | null;
-};
-```
-
-### 文本注意力状态
-
-Runtime status 新增可选 `semantic_attention`：`configured`、`automatic`、`running`、
-`pin`、`reason` 及可空的 `last_pass`。后者包含单轮有界统计 `scanned`、`calls`、
-`input_tokens`、`advanced`、`fired`、`expired`、`deferred`、`reason`，仅配置为 auditor
-的调用者可读取，其他调用者得到 null。它不是完整清单，也不证明所有文本 Watch
-均已求值。既有 JSON/CBOR/Markdown 和 HTTP/MCP 请求形状保持兼容；不新增模型配置
-或求值写接口。操作员通过每 Space 的 `semantic` 启动绑定安装。预算、pin 迁移、
-unknown/deferred、原生 Artifact 擦除及幂等恢复见
-[SEMANTIC_WATCH_RUNTIME_cn.md](SEMANTIC_WATCH_RUNTIME_cn.md)。
-
-```typescript
-type SemanticAttentionStatus = {
-  configured: boolean; automatic: boolean; running: boolean;
-  pin: { id: string; digest: string } | null; reason: string | null;
-  last_pass: {
-    scanned: number; calls: number; input_tokens: number; advanced: number;
-    fired: number; expired: number; deferred: number; reason: string | null;
-  } | null;
-};
-```
-
-### 上下文 trust 状态与发现提示
-
-既有 HTTP 状态路由和 MCP 状态工具新增可选 `trust` 元数据。`governor_authorized`
-表示配置的治理主体当前是否具有原生权限，不是授予调用者的权限。不新增 HTTP/MCP
-trust 管理或独立事实写工具，既有 JSON/CBOR/Markdown 请求保持兼容。正常认证的
-独立 measurement payload 可选携带 `trust_verification_ref: "E-…"`，用于公告既有原生
-事实核验记录并有界发现，不能把行动成功/失败转成信任得分。可信 Rust 事实接收、
-审查、应用、版本冲突恢复和限定域回退见 [TRUST_RUNTIME_cn.md](TRUST_RUNTIME_cn.md)。
-
-```typescript
-type TrustRuntimeStatus = {
-  configured: boolean; automatic: boolean; apply: boolean; automatic_apply: boolean;
-  calibrated: boolean; governor_authorized: boolean; running: boolean;
-  reason: string | null;
-};
-```
-
-## 执行与资源限制
+## 10) 执行与资源限制
 
 Formation 与 Maintenance 共用每个 Space 的写入准入 guard，覆盖 Maintenance
 前置的确定性结算。Formation 持有 guard 时，显式 Rust/HTTP/MCP Maintenance
