@@ -4,6 +4,17 @@ All notable changes to the Anda Brain project.
 
 ## [Unreleased]
 
+### Fixed
+
+- The embedded KIP reference supplement names its source `anda_kip` 0.14.2, the
+  release `Cargo.lock` resolves: `assets/kip-reference/manifest.json`,
+  `kip_reference::VERSION` and the Worker's `assets/kip-reference.json` /
+  `REFERENCE_VERSION` were regenerated from that crate, so `kip_reference` pages report
+  `crate_version: "0.14.2"`. The documents were already byte-identical to 0.14.2; only
+  the labels changed. `scripts/sync-kip-reference.mjs --check` passes again, and so does
+  the Worker's `codegen:check`, which compares the bundle version with `Cargo.lock` and
+  had failed since the 0.13.4 lockfile refresh.
+
 ### Documentation
 
 - `README.md`, `README_cn.md` and `anda_brain/README.md` are rewritten against the

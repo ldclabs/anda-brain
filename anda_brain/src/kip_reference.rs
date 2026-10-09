@@ -6,7 +6,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::sync::LazyLock;
 
-const VERSION: &str = "0.14.0";
+const VERSION: &str = "0.14.2";
 const PAGE_BYTES: usize = 8192;
 
 pub(crate) const INSTRUCTIONS: &str = "# Embedded KIP references\n\
