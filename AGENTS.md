@@ -234,6 +234,18 @@ lean build compiling.
   route handlers.
 - Preserve compact persisted field aliases in `types.rs`; they are storage/API
   compatibility details.
+- Never use `oneOf`, `anyOf` or `allOf` in a model-facing schema: agent tool
+  definitions, MCP tool schemas, and structured-output schemas. Anthropic
+  rejects them at the top level of a tool's `input_schema` and fails the whole
+  request with a 400 (KIP's top-level `oneOf` once broke every Formation,
+  Recall and Maintenance pass on Claude); strict modes reject them anywhere.
+  Use a type list for nullable fields and for alternatives of distinct types,
+  one object with an `enum` discriminator for tagged variants, and enforce
+  cross-field rules when parsing. schemars derives these keywords from
+  `Option<Struct>`, untagged and tagged enums: `AndaBrainMcpServer::new`
+  flattens them and `tool_schemas_use_no_schema_combinators` checks every MCP
+  tool, so run it after adding one. The KIP reference documents under
+  `assets/kip-reference/schemas/` are text the model reads, not tool schemas.
 - Be careful with dirty worktrees. Do not revert or overwrite unrelated user
   changes.
 

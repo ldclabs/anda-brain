@@ -7,7 +7,7 @@ description: |
   asks to use Anda Brain. Observer ingestion, runtime installation and trust
   governance require separate trusted-host authority.
 metadata:
-  version: 0.13.3
+  version: 0.13.4
   url: https://github.com/ldclabs/anda-brain/blob/main/skills/anda-brain/SKILL.md
   keywords:
     - long-term memory
@@ -23,7 +23,7 @@ metadata:
 
 # 🧠 Anda Brain
 
-This skill targets the Rust **Anda Brain 0.13.3** service with KIP 2.0 (`11a82ec`),
+This skill targets the Rust **Anda Brain 0.13.4** service with KIP 2.0 (`11a82ec`),
 `cognitive-memory@2.0.0`, Nexus 0.14 and KIP 0.14. The Cloudflare Worker uses a
 separate engine and does not acquire these Rust runtime capabilities automatically.
 Check the deployed service and its configuration before choosing an optional path.

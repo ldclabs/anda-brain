@@ -2,6 +2,35 @@
 
 All notable changes to the Anda Brain project.
 
+## [0.13.4] — 2026-10-09
+
+On the same KIP `11a82ec` / `cognitive-memory@2.0.0` stack.
+
+### Fixed
+
+- MCP tool schemas no longer contain `oneOf`, `anyOf` or `allOf`. schemars derived them
+  from `Option<Struct>` fields, the untagged command and message-content enums and the
+  tagged `AttentionResponse`, and model providers restrict them (Anthropic rejects them
+  at the top level of a tool, strict modes anywhere). `AndaBrainMcpServer::new` now
+  flattens each tool's schema: an optional struct field is its struct, alternatives of
+  distinct types become one schema with a type list, and tagged variants become one
+  object whose `kind` is an enum, with the variant-only fields optional and named per
+  `kind` in the description. Arguments are still checked when they are deserialized,
+  and a test keeps every MCP tool free of combinators.
+
+### Dependencies
+
+- `anda_engine` 0.16.7 (from 0.16.4), `anda_core` 0.16.3, `anda_cognitive_nexus`
+  0.14.4, `anda_db` 0.14.2 and `anda_kip` 0.14.1, under the existing requirements.
+- `rmcp` / `rmcp-macros` 3.5.1 (from 3.5.0) and other lockfile-only patch updates.
+
+### Known limits
+
+- Formation, Recall and Maintenance still offer `execute_kip` from `anda_kip` 0.14.1,
+  whose top-level `oneOf` Anthropic rejects, so they fail on a Claude model until the
+  lockfile picks up `anda_kip` 0.14.2 or an `anda_engine` release whose Anthropic adapter
+  drops top-level combinators.
+
 ## [0.13.3] — 2026-09-29
 
 On the same KIP `11a82ec` / `cognitive-memory@2.0.0` stack. A prompt and

@@ -335,12 +335,143 @@ pub struct GetConversationInput {
     pub artifacts_offset: Option<usize>,
 }
 
+/// MCP clients hand these schemas to their models, and model providers limit
+/// schema combinators: Anthropic rejects them at the top level of a tool and
+/// strict modes reject them anywhere. schemars derives them for
+/// `Option<Struct>` (`anyOf` with null), untagged enums (`anyOf` of distinct
+/// types) and tagged enums (`oneOf` of objects), so each tool's schema is
+/// flattened once. Serde still checks the arguments when it reads them.
+fn flatten_combinators(schema: &mut Value) {
+    match schema {
+        Value::Object(map) => {
+            for key in ["anyOf", "oneOf", "allOf"] {
+                if let Some(Value::Array(branches)) = map.remove(key) {
+                    merge_branches(map, branches);
+                }
+            }
+            map.values_mut().for_each(flatten_combinators);
+        }
+        Value::Array(items) => items.iter_mut().for_each(flatten_combinators),
+        _ => {}
+    }
+}
+
+fn merge_branches(map: &mut Map<String, Value>, branches: Vec<Value>) {
+    // An optional value is left out rather than sent as null.
+    let mut branches: Vec<Map<String, Value>> = branches
+        .into_iter()
+        .filter(|branch| branch.get("type") != Some(&json!("null")))
+        .filter_map(|branch| match branch {
+            Value::Object(branch) => Some(branch),
+            _ => None,
+        })
+        .collect();
+    if branches.len() > 1
+        && branches
+            .iter()
+            .all(|b| b.get("type") == Some(&json!("object")))
+    {
+        return merge_object_variants(map, branches);
+    }
+    if branches.len() > 1 {
+        // Variants of distinct types: one schema with a type list.
+        let types = branches.iter_mut().filter_map(|b| b.remove("type"));
+        map.insert("type".into(), Value::Array(types.collect()));
+    }
+    for (key, value) in branches.into_iter().flatten() {
+        map.entry(key).or_insert(value);
+    }
+}
+
+/// Tagged variants side by side: the tag's values become one enum, only the
+/// fields every variant needs stay required, and the description says which
+/// other fields go with each tag.
+fn merge_object_variants(map: &mut Map<String, Value>, variants: Vec<Map<String, Value>>) {
+    let required_of = |variant: &Map<String, Value>| -> Vec<String> {
+        let required = variant.get("required").and_then(Value::as_array);
+        required
+            .into_iter()
+            .flatten()
+            .filter_map(|name| name.as_str().map(String::from))
+            .collect()
+    };
+    let common: Vec<String> = required_of(&variants[0])
+        .into_iter()
+        .filter(|name| variants.iter().all(|v| required_of(v).contains(name)))
+        .collect();
+    let mut properties = Map::new();
+    let mut notes = Vec::new();
+    for variant in &variants {
+        let mut tag = None;
+        if let Some(Value::Object(fields)) = variant.get("properties") {
+            for (name, field) in fields {
+                let Some(value) = field.get("const") else {
+                    properties
+                        .entry(name.clone())
+                        .or_insert_with(|| field.clone());
+                    continue;
+                };
+                tag = Some(format!("{name} {value}"));
+                let entry = properties.entry(name.clone()).or_insert_with(|| {
+                    let mut field = field.clone();
+                    if let Some(field) = field.as_object_mut() {
+                        field.remove("const");
+                        field.insert("enum".into(), json!([]));
+                    }
+                    field
+                });
+                if let Some(values) = entry["enum"].as_array_mut() {
+                    values.push(value.clone());
+                }
+            }
+        }
+        let extra: Vec<String> = required_of(variant)
+            .into_iter()
+            .filter(|name| !common.contains(name))
+            .collect();
+        if let Some(tag) = tag {
+            let mut note = format!("With {tag}");
+            if !extra.is_empty() {
+                note.push_str(&format!(", also send {}", extra.join(", ")));
+            }
+            note.push('.');
+            if let Some(description) = variant.get("description").and_then(Value::as_str) {
+                note = format!("{note} {description}");
+            }
+            notes.push(note);
+        }
+    }
+    let closed = variants
+        .iter()
+        .all(|v| v.get("additionalProperties") == Some(&json!(false)));
+    map.insert("type".into(), json!("object"));
+    map.insert("properties".into(), Value::Object(properties));
+    map.insert("required".into(), json!(common));
+    if closed {
+        map.insert("additionalProperties".into(), json!(false));
+    }
+    if !notes.is_empty() {
+        let description = map.get("description").and_then(Value::as_str);
+        let text = description.into_iter().map(String::from).chain(notes);
+        map.insert(
+            "description".into(),
+            json!(text.collect::<Vec<_>>().join(" ")),
+        );
+    }
+}
+
 impl AndaBrainMcpServer {
     pub fn new(app: AppState, config: McpServerConfig) -> Self {
-        #[allow(unused_mut)]
         let mut tool_router = Self::tool_router();
         #[cfg(feature = "wiki")]
         tool_router.merge(Self::wiki_tool_router());
+        for route in tool_router.map.values_mut() {
+            let mut schema = Value::Object((*route.attr.input_schema).clone());
+            flatten_combinators(&mut schema);
+            if let Value::Object(schema) = schema {
+                route.attr.input_schema = Arc::new(schema);
+            }
+        }
         Self {
             app,
             config,
@@ -1884,6 +2015,71 @@ mod tests {
         .into_message()
         .unwrap();
         assert_eq!(parts.text().as_deref(), Some("done"));
+    }
+
+    #[tokio::test]
+    async fn tool_schemas_use_no_schema_combinators() {
+        fn assert_free(path: &str, value: &Value) {
+            match value {
+                Value::Object(map) => {
+                    for key in ["anyOf", "oneOf", "allOf"] {
+                        assert!(!map.contains_key(key), "{path} contains {key}");
+                    }
+                    for (name, child) in map {
+                        assert_free(&format!("{path}.{name}"), child);
+                    }
+                }
+                Value::Array(items) => {
+                    for (i, child) in items.iter().enumerate() {
+                        assert_free(&format!("{path}[{i}]"), child);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let server = create_server("mcp_tool_schemas").await;
+        let tools = server.tool_router.list_all();
+        for tool in &tools {
+            assert_free(&tool.name, &Value::Object((*tool.input_schema).clone()));
+        }
+        let schema = |name: &str| {
+            let tool = tools.iter().find(|tool| tool.name == name).unwrap();
+            Value::Object((*tool.input_schema).clone())
+        };
+
+        // `Option<Struct>`: the field is left out instead of sent as null.
+        let recall = schema("anda_brain_recall_memory");
+        assert_eq!(
+            recall["properties"]["context"],
+            json!({"$ref": "#/$defs/InputContext"})
+        );
+        // An untagged enum of distinct types keeps both shapes.
+        let kip = schema("anda_brain_execute_kip_readonly");
+        let item = &kip["$defs"]["McpKipCommandItem"];
+        assert_eq!(item["type"], json!(["string", "object"]));
+        assert_eq!(item["required"], json!(["command"]));
+        // A tagged enum: one object, the tag as an enum, and only the fields
+        // every variant needs required.
+        let attention = schema("anda_brain_respond_attention");
+        let response = &attention["$defs"]["AttentionResponse"];
+        assert_eq!(response["type"], "object");
+        assert_eq!(
+            response["properties"]["kind"]["enum"],
+            json!(["clarification", "agent_statement"])
+        );
+        assert_eq!(response["required"], json!(["kind", "event_key"]));
+        assert_eq!(response["additionalProperties"], false);
+        let description = response["description"].as_str().unwrap();
+        assert!(description.contains("With kind \"clarification\", also send answer."));
+        assert!(description.contains("With kind \"agent_statement\", also send statement."));
+        let parsed: crate::runtime_api::AttentionResponse = serde_json::from_value(
+            json!({"kind": "agent_statement", "event_key": "e", "statement": "s"}),
+        )
+        .unwrap();
+        assert!(matches!(
+            parsed,
+            crate::runtime_api::AttentionResponse::AgentStatement { .. }
+        ));
     }
 
     #[tokio::test]
