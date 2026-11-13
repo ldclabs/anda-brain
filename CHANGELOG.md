@@ -4,6 +4,19 @@ All notable changes to the Anda Brain project.
 
 ## [Unreleased]
 
+### Fixed
+
+- Budgeted Recall delivers what memory holds about the Concepts it finds. The host's
+  question search returned Concept records only, so a packet could name `Project Birch`
+  without the claim that it releases on Tuesday: facts live in Propositions and
+  Assertions, which a concept search never returns, and a pass whose planning budget
+  is exhausted never gets to read them. Each discovered Concept now also contributes
+  up to six `kind: "claim"` items, in either direction and newest first, each with
+  its final belief under `kip:memory-default`, stance, mode, claim time, actor and,
+  where the engine excluded the Assertion, the reason. The Brain's own SleepTasks are
+  no longer question-search candidates: a queued review of a draft symbol repeats the
+  question's words and is not memory about it.
+
 ## [0.13.6] — 2026-10-17
 
 ### Fixed

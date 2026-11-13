@@ -31,6 +31,25 @@ const BUDGET_MODE: &str = "You are selecting an authorized memory packet for ano
     native uncertainty, conflicts and warnings. Unchecked channels are unknown, not absent. Each \
     pass receives the entire currently admitted snapshot; previous provider history is \
     intentionally not replayed.";
+/// Question-matched Concepts the host reads before any model pass.
+const DISCOVERY_HITS: usize = 8;
+/// What memory holds about one discovered Concept: the claims it takes part in, in
+/// either direction, newest first, each with its final belief. A Concept record only
+/// names an entity; the facts about it are Propositions and Assertions, which a
+/// concept search never returns and which a pass that ran out of planning budget
+/// never gets to read.
+const CLAIMS: &str = r#"FIND(?p.id, ?p.subject, ?subject.name, ?predicate, ?p.object, ?object.name,
+     ?belief.status, ?belief.explanation.excluded,
+     ?a.id, ?a.stance, ?a.mode, ?a.asserted_at, ?a.asserted_by, ?actor.name)
+WHERE {
+  ?p (:entity, ?predicate, ?object)
+  UNION { ?p (?subject, ?predicate, :entity) }
+  ?a ASSERTION {proposition: ?p, asserted_by: ?actor}
+  ?belief BELIEF (?p)
+}
+WITH EPISTEMIC {purpose: "answer_user", risk: "low", policy: "kip:memory-default"}
+ORDER BY ?a.asserted_at DESC
+LIMIT 6"#;
 const ALL_CHANNELS: [Channel; 7] = [
     Channel::Primer,
     Channel::Notes,
@@ -362,7 +381,7 @@ impl RecallAgent {
         let mut observations = vec![json!({"primer":primer})];
         let discovery = self
             .budget_kip(kip::request_with(
-                "SEARCH CONCEPT :query LIMIT 8",
+                "SEARCH CONCEPT :query LIMIT 16",
                 kip::param("query", query),
             ))
             .await;
@@ -374,9 +393,24 @@ impl RecallAgent {
                     .first_result()
                     .and_then(|value| value["hits"].as_array())
                 {
-                    for hit in hits.iter().take(8) {
+                    let mut seen_claims = BTreeSet::new();
+                    // A SleepTask is the Brain's own queued work, such as the review
+                    // of a draft symbol whose description repeats the question's
+                    // words. It is not memory about the question.
+                    for hit in hits
+                        .iter()
+                        .filter(|hit| !is_sleep_task(&hit["element"]))
+                        .take(DISCOVERY_HITS)
+                    {
                         let element = &hit["element"];
                         discover_skills(element, &mut material.skills);
+                        for claim in self.discovered_claims(element, &mut seen_claims).await {
+                            if let Some(id) =
+                                material.add(Channel::Kip, Priority::Relevant, claim)?
+                            {
+                                discovered.push(id);
+                            }
+                        }
                         if let Some(existing) = material.items.iter().find(|item| {
                             element["id"].is_string() && item.content["id"] == element["id"]
                         }) {
@@ -770,6 +804,39 @@ impl RecallAgent {
         .await
     }
 
+    /// The claims a discovered Concept takes part in, as compact packet items. A failed
+    /// or empty read adds nothing: the Concept record is still delivered, and the
+    /// channel is already marked partial.
+    async fn discovered_claims(&self, element: &Json, seen: &mut BTreeSet<String>) -> Vec<Json> {
+        let Some(id) = element["id"].as_str() else {
+            return Vec::new();
+        };
+        let response = self
+            .budget_kip(kip::request_with(
+                CLAIMS,
+                kip::param("entity", json!({"id": id})),
+            ))
+            .await;
+        let Ok(response) = response else {
+            return Vec::new();
+        };
+        if !kip::succeeded(&response) {
+            return Vec::new();
+        }
+        response
+            .first_result()
+            .and_then(Json::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|row| claim_item(row, element))
+            .filter(|claim| {
+                claim["assertion"]
+                    .as_str()
+                    .is_some_and(|assertion| seen.insert(assertion.to_owned()))
+            })
+            .collect()
+    }
+
     async fn budget_kip(&self, mut request: Request) -> Result<Response, BoxError> {
         let _guard = if let Some(control) = &self.product_control {
             let guard = control.gate.read().await;
@@ -1110,6 +1177,74 @@ fn expire_procedure_checks(items: &mut [MemoryItem], business_now: u64, all: boo
         }
     }
     changed
+}
+
+fn is_sleep_task(element: &Json) -> bool {
+    element["schema_ref"]
+        .as_str()
+        .is_some_and(|schema| schema.ends_with("/SleepTask"))
+}
+
+/// One `CLAIMS` row as a packet item. `entity` is the discovered Concept the row was
+/// read for; it stands at whichever endpoint the row left unbound.
+fn claim_item(row: &Json, entity: &Json) -> Option<Json> {
+    let [
+        proposition,
+        subject,
+        subject_name,
+        predicate,
+        object,
+        object_name,
+        belief,
+        excluded,
+        assertion,
+        stance,
+        mode,
+        asserted_at,
+        asserted_by,
+        actor_name,
+    ] = row.as_array()?.as_slice()
+    else {
+        return None;
+    };
+    // A Concept endpoint is delivered with its name; a Literal object is itself.
+    let endpoint = |reference: &Json, name: &Json| -> Json {
+        let Some(id) = reference.get("id") else {
+            return reference.clone();
+        };
+        let name = if name.is_null() && *id == entity["id"] {
+            &entity["name"]
+        } else {
+            name
+        };
+        json!({"id": id, "name": name})
+    };
+    let mut item = json!({
+        "kind": "claim",
+        "subject": endpoint(subject, subject_name),
+        "predicate": predicate,
+        "object": endpoint(object, object_name),
+        "belief": belief,
+        "stance": stance,
+        "mode": mode,
+        "asserted_at": asserted_at,
+        "asserted_by": endpoint(asserted_by, actor_name),
+        "proposition": proposition,
+        "assertion": assertion,
+    });
+    // Why this Assertion does not count toward the belief, such as a value that a
+    // later one succeeded: the status alone reads as "nothing is known".
+    let reasons: Vec<&Json> = excluded
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|entry| entry["assertion_id"] == *assertion)
+        .map(|entry| &entry["reason"])
+        .collect();
+    if !reasons.is_empty() {
+        item["excluded"] = json!(reasons);
+    }
+    Some(item)
 }
 
 fn contains_program(value: &Json) -> bool {

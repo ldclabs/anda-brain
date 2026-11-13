@@ -1198,3 +1198,105 @@ fn packet_ties_preserve_search_order_beyond_nine_candidates() {
     assert_eq!(packet.items.len(), 1);
     assert_eq!(packet.items[0].id, ids[0]);
 }
+
+#[tokio::test]
+async fn discovered_concepts_deliver_their_claims_and_final_beliefs_without_model_planning() {
+    let (_, space, requests) = setup("discovered_claims", Behavior::Select).await;
+    for definition in [
+        r#"DEFINE CONCEPT TYPE "Project" {description: "A project or named undertaking."}"#,
+        r#"DEFINE PREDICATE "release_time" {description: "When the subject project is released.", subject: {concept_types: ["Project"]}, functional: true}"#,
+        r#"DEFINE PREDICATE "owned_by" {description: "The subject project is owned by the object person.", subject: {concept_types: ["Project"]}, object: {concept_types: ["Person"]}}"#,
+    ] {
+        seed(&space, definition, Default::default()).await;
+    }
+    let handle = |result: Json, name: &str| json!({"id": result["handles"][name]});
+    let user = handle(
+        seed(&space, r#"UPSERT CONCEPT ?u { MATCH {type: "Person", key: "synthetic-user"} SET FIELDS {name: "Synthetic User"} }"#, Default::default()).await,
+        "u",
+    );
+    let birch = handle(
+        seed(&space, r#"UPSERT CONCEPT ?p { MATCH {type: "Project", key: "project-birch"} SET FIELDS {name: "Project Birch"} }"#, Default::default()).await,
+        "p",
+    );
+    // The Brain's own queued review of a draft symbol repeats the question's words.
+    seed(&space, r#"CREATE CONCEPT ?t {TYPE "SleepTask" NAME "Review draft PredicateType release_time" SET ATTRIBUTES {task_class: "review_schema", summary: "Review the draft PredicateType release_time: when project Birch releases", status: "pending"}}"#, Default::default()).await;
+    let mut parameters = serde_json::Map::new();
+    parameters.insert("u".into(), user.clone());
+    parameters.insert("b".into(), birch.clone());
+    for command in [
+        r#"ASSERT (:b, "release_time", "Friday") {by: :u, mode: "stated", at: "2026-01-01T00:00:00.000Z"}"#,
+        r#"ASSERT (:b, "release_time", "Tuesday") {by: :u, mode: "stated", at: "2026-01-02T00:00:00.000Z"}"#,
+        r#"ASSERT (:b, "owned_by", :u) {by: :u, mode: "stated", at: "2026-01-03T00:00:00.000Z"}"#,
+    ] {
+        seed(&space, command, parameters.clone()).await;
+    }
+    // One planning pass that selects, then a budget too small for any model call.
+    for context_tokens in [131_072, 1] {
+        let output = space
+            .query(
+                SELF_USER_ID,
+                StringOr::Value(RecallInput {
+                    query: "On what day does project Birch currently release?".into(),
+                    budget: Some(limits(4096, context_tokens)),
+                    ..Default::default()
+                }),
+            )
+            .await
+            .unwrap();
+        assert!(output.failed_reason.is_none(), "{output:?}");
+        let packet = check_output(&output, 4096).unwrap();
+        let claims: Vec<&Json> = packet
+            .items
+            .iter()
+            .filter(|item| item.channel == Channel::Kip && item.content["kind"] == "claim")
+            .map(|item| &item.content)
+            .collect();
+        let claim = |object: Json| {
+            claims
+                .iter()
+                .find(|claim| claim["object"] == object)
+                .unwrap_or_else(|| panic!("no claim with object {object}: {claims:?}"))
+        };
+        let tuesday = claim(json!("Tuesday"));
+        assert_eq!(tuesday["belief"], "accepted");
+        assert_eq!(
+            tuesday["subject"],
+            json!({"id": birch["id"], "name": "Project Birch"})
+        );
+        assert!(
+            tuesday["predicate"]
+                .as_str()
+                .unwrap()
+                .ends_with("/release_time")
+        );
+        assert_eq!(tuesday["stance"], "support");
+        assert_eq!(tuesday["mode"], "stated");
+        assert_eq!(tuesday["asserted_at"], "2026-01-02T00:00:00.000Z");
+        assert_eq!(
+            tuesday["asserted_by"],
+            json!({"id": user["id"], "name": "Synthetic User"})
+        );
+        assert!(tuesday.get("excluded").is_none());
+        // The value it succeeded is delivered with the engine's own status and reason.
+        let friday = claim(json!("Friday"));
+        assert_eq!(friday["belief"], "insufficient");
+        assert_eq!(friday["excluded"], json!(["outside_valid_time"]));
+        // A Concept object carries its name; each Assertion is delivered once.
+        let owner = claim(json!({"id": user["id"], "name": "Synthetic User"}));
+        assert_eq!(owner["belief"], "accepted");
+        assert_eq!(claims.len(), 3, "{claims:?}");
+        assert!(
+            packet
+                .items
+                .iter()
+                .any(|item| item.content["id"] == birch["id"])
+        );
+        assert!(!packet.items.iter().any(|item| {
+            item.content["schema_ref"]
+                .as_str()
+                .is_some_and(|s| s.ends_with("/SleepTask"))
+        }));
+    }
+    assert_eq!(requests.lock().len(), 1);
+    space.close().await.unwrap();
+}
