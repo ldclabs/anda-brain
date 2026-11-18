@@ -412,7 +412,9 @@ budget is exhausted, the host can still return its authorized read candidates
 with a required warning naming `recall_context_budget_exhausted`. This is a
 partial `bounded` packet, not model synthesis or proof of relevance. A missing
 required read or an output budget too small for all constraints/warnings still
-returns `budget_insufficient`. Provider failures remain failures.
+returns `budget_insufficient`. If the selection-only pass fails, Recall also
+returns a partial packet from authorized reads with the corresponding warning.
+Provider failures during read planning still fail the request.
 
 The fixed codec counts the entire compact packet, including escaping and
 coverage. `context_tokens` additionally bounds the cumulative versioned

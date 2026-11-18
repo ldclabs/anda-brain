@@ -22,6 +22,8 @@ All notable changes to the Anda Brain project.
   discovery reads up to four claim pages concurrently, includes the explicitly
   keyed counterparty, and follows one supported relationship hop. Results retain
   their search order, attribution, final beliefs and original token limits.
+  A failed selection-only pass returns a partial packet with native candidates
+  and a warning.
 - Budgeted Recall delivers what memory holds about the Concepts it finds. The host's
   question search returned Concept records only, so a packet could name `Project Birch`
   without the claim that it releases on Tuesday: facts live in Propositions and
@@ -34,13 +36,14 @@ All notable changes to the Anda Brain project.
   question's words and is not memory about it.
 - HTTP and MCP return `UnsupportedCapability` for an unknown Memory Interface
   level after caller admission. The Worker uses its engine's compiled request schema
-  to check receipt lists, time selectors, Unicode string lengths and fields.
+  to check receipt lists, time selectors, Unicode string lengths and fields. Blank
+  Recall queries are rejected at the request boundary.
   Rust batch diagnostics retain the error when a later KIP operation fails.
   The Go CLI checks that each operation in a successful batch returned a
   confirmed result, including `no_effect`.
 - CLI recall merges explicit and saved receipts once. A full session stops a new
   mutation before submission. A local session-file error still prints the server's receipt.
-- The standalone draft-Space migration checks its source snapshot before rebuilding,
+- The standalone draft-Space migration checks its source snapshot with the draft engine,
   preserves Concept canonical IDs and returns a failure if the rebuilt counts differ.
   It computes import chunks once and copies records only into the chunks that need them.
 

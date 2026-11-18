@@ -347,7 +347,9 @@ LegacyRecord 原文，并在 `recall_detail` 中列出省略字段。必需属�
 可选候选逐条装包；`coverage.partial`、`coverage.omitted` 明示不完整交付。累计模型输入
 预算耗尽时，宿主仍可返回已授权读取的候选，同时附上必需警告 `recall_context_budget_exhausted`。
 这类响应是局部 `bounded` 包，不是模型合成答案或相关性证明。必需读取不完整，或输出预算
-连完整约束和警告都容纳不了时，仍返回 `budget_insufficient`；提供方调用失败也仍按失败处理。
+连完整约束和警告都容纳不了时，仍返回 `budget_insufficient`。如果仅选择 ID 的步骤失败，
+Recall 也会用已授权读取的候选返回局部记忆包，并附上对应警告。读取规划阶段的提供方失败
+仍会导致请求失败。
 
 固定 codec 对 compact JSON 记忆包全文计数，含转义和 coverage；`context_tokens`
 另行限制本次 Recall 所有规划输入规范序列化的累计 token。提供商消息模板、计费和

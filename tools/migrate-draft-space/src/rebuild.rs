@@ -502,10 +502,9 @@ pub async fn rebuild(
     {
         return Err(format!("cannot restore {} in storage state {}", fact.id, fact.state).into());
     }
-    // The generated legacy package is this Space's own artifact: read it from
-    // the old Nexus before that Nexus is dropped.
-    let db = open(root, space).await?;
-    let old = CognitiveNexus::connect(db.clone()).await?;
+    // Check the source and read its legacy package using the draft engine.
+    // Connecting with 0.14 here would upgrade the collections during preflight.
+    let old = crate::export::open_source(root, space).await?;
     if old.store.spaces().len() != 1 {
         old.close().await?;
         return Err("migration requires a database containing only the default Nexus Space".into());
@@ -520,20 +519,17 @@ pub async fn rebuild(
                 .into(),
         );
     }
-    let legacy: Vec<Arc<SchemaPackage>> = old
-        .store
-        .installed_packages()
-        .await?
+    let installed = old.store.installed_packages().await;
+    old.close().await?;
+    let legacy = installed?
         .into_iter()
         .filter(|(reference, _)| reference.starts_with("kip://legacy/"))
-        .map(|(_, package)| package)
-        .collect();
-    old.close().await?;
+        .map(|(_, package)| Ok(SchemaPackage::parse(&package.artifact()?.to_string())?))
+        .collect::<Result<Vec<_>, BoxError>>()?;
 
     let profile = SchemaPackage::parse(anda_cognitive_nexus::profiles::COGNITIVE_MEMORY)?;
     let packages: Vec<_> = legacy
         .iter()
-        .map(Arc::as_ref)
         .chain([&profile])
         .map(|p| p.manifest.package_ref.clone())
         .collect();
@@ -563,7 +559,7 @@ pub async fn rebuild(
     );
     let nexus = CognitiveNexus::connect(db.clone()).await?;
     let mut lock = SchemaLock::default();
-    for package in legacy.iter().map(|p| p.as_ref()).chain([&profile]) {
+    for package in legacy.iter().chain([&profile]) {
         nexus
             .install_package(package, "migrate-draft-space")
             .await?;
@@ -837,6 +833,7 @@ mod tests {
             kip13::TopLevelStatus::Succeeded,
             "{response:?}"
         );
+        let source_version = old.store.concepts().schema().version();
         old.close().await.unwrap();
 
         let mut exported = crate::export::export(dir.path(), name).await.unwrap();
@@ -854,6 +851,9 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("different snapshots"), "{err}");
+        let old = crate::export::open_source(dir.path(), name).await.unwrap();
+        assert_eq!(old.store.concepts().schema().version(), source_version);
+        old.close().await.unwrap();
         exported.capsule["payload"]["source"]["snapshot_seq"] = seq;
         rebuild(dir.path(), name, &exported, &types).await.unwrap();
         assert_eq!(

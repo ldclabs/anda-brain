@@ -18,8 +18,7 @@ use std::{path::Path, sync::Arc};
 
 use crate::BoxError;
 
-/// What an import does not carry: a Concept's Space-local key, the storage
-/// state (an import writes every element live), and the self Concept.
+/// Values restored after import, including Concept identity and storage state.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Fact {
     pub id: String,
@@ -56,7 +55,7 @@ pub fn storage_config() -> StorageConfig {
     }
 }
 
-pub async fn export(root: &Path, space: &str) -> Result<Exported, BoxError> {
+pub async fn open_source(root: &Path, space: &str) -> Result<CognitiveNexus, BoxError> {
     let os = object_store::local::LocalFileSystem::new_with_prefix(root)?;
     let os = store13::MetaStoreBuilder::new(os, 100000).build();
     let db = Arc::new(
@@ -71,7 +70,11 @@ pub async fn export(root: &Path, space: &str) -> Result<Exported, BoxError> {
         )
         .await?,
     );
-    let nexus = CognitiveNexus::connect(db.clone()).await?;
+    Ok(CognitiveNexus::connect(db).await?)
+}
+
+pub async fn export(root: &Path, space: &str) -> Result<Exported, BoxError> {
+    let nexus = open_source(root, space).await?;
     let store = &nexus.store;
     if store.spaces().len() != 1 {
         nexus.close().await?;

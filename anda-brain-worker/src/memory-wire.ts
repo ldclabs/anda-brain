@@ -128,7 +128,11 @@ export function parseMemoryRequest(value: unknown): MemoryRequest {
   } catch (error) {
     throw new MemoryError('InvalidRequestEnvelope', errorOf(error).message)
   }
-  return value as unknown as MemoryRequest
+  const request = value as unknown as MemoryRequest
+  if (request.operation === 'recall' && typeof request.input.query === 'string' && !request.input.query.trim()) {
+    throw new MemoryError('InvalidRequestEnvelope', 'query is non-empty text')
+  }
+  return request
 }
 
 /**

@@ -156,6 +156,16 @@ impl Material {
         Ok(Some((tokens, evicted)))
     }
 
+    fn evict(&mut self, evicted: &BTreeSet<String>) {
+        self.items.retain(|item| {
+            if evicted.contains(&item.id) {
+                omit(&mut self.coverage, item.channel);
+                return false;
+            }
+            true
+        });
+    }
+
     fn coverage(&self) -> Coverage {
         with_unchecked(self.coverage.clone())
     }
@@ -453,6 +463,7 @@ impl RecallAgent {
         let mut selected = Vec::new();
         let mut failed = false;
         let mut finished = false;
+        let mut selection_evictions = None;
         let mut context_spent = 0usize;
         for _ in 0..self.max_model_turns().min(8) {
             let mut request = template.clone();
@@ -491,14 +502,12 @@ impl RecallAgent {
                 break;
             };
             context_spent += tokens;
-            // Evict only after admission so a host-only fallback retains its reads.
-            material.items.retain(|item| {
-                if evicted.contains(&item.id) {
-                    omit(&mut material.coverage, item.channel);
-                    return false;
-                }
-                true
-            });
+            if selection_only {
+                // The final selector may fail. Keep the host's full candidate set for fallback.
+                selection_evictions = Some(evicted);
+            } else {
+                material.evict(&evicted);
+            }
             if material.critical_missing {
                 failed = true;
                 break;
@@ -694,11 +703,20 @@ impl RecallAgent {
                 break;
             }
         }
-        // An exhausted planning-input budget can still deliver host-read
-        // candidates. Keep every constraint/warning, mark partial coverage, and
-        // never invent a summary or promote a procedure into executable standing.
-        if material.failure == Some("recall_context_budget_exhausted") && !material.critical_missing
-        {
+        let fallback_reason = if let Some(evicted) = selection_evictions {
+            if finished {
+                // A successful selection can only name records it actually saw.
+                material.evict(&evicted);
+                None
+            } else {
+                Some(material.failure.unwrap_or("recall_planner_incomplete"))
+            }
+        } else {
+            material
+                .failure
+                .filter(|&reason| reason == "recall_context_budget_exhausted")
+        };
+        if let Some(reason) = fallback_reason.filter(|_| !material.critical_missing) {
             // Without model planning, return structured query candidates and
             // constraints, not opaque notes or prior conversational narratives.
             for channel in [Channel::Notes, Channel::History] {
@@ -715,7 +733,7 @@ impl RecallAgent {
                 Priority::Warning,
                 json!({
                     "status": "partial",
-                    "reason": "recall_context_budget_exhausted",
+                    "reason": reason,
                     "selection": "host-read candidates; model planning was incomplete",
                     "action_ready": false,
                 }),

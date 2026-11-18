@@ -61,9 +61,10 @@ cargo run --release -- --db /tmp/anda-db-migrating --work /tmp/migrate-work --ty
 ```
 
 `--space` names the Space database (default `anda_bot`). The export is kept in
-`--work/export.json`. Before rebuilding from that export, the tool checks the
-database name, Space creation time and snapshot sequence. For an export made by an older tool, use a fresh `--work`
-directory and reuse your existing `--types` file. Always rebuild from a fresh database copy. The run
+`--work/export.json`. The 0.13 engine checks the database name, Space creation time
+and snapshot sequence before the 0.14 engine starts rebuilding. For an export made
+by an older tool, use a fresh `--work` directory and reuse your existing `--types`
+file. Always rebuild from a fresh database copy. The run
 writes `report.json` (dropped and kept collections, packages, defined types, id changes,
 lineage Activities, restored keys and states, warnings) and `census.json`. Swap the migrated
 directory in only after checking them, and start the host on the new stack.

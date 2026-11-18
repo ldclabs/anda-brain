@@ -85,7 +85,7 @@ describe('Memory Interface', () => {
     for (const input of [
       { mode: 'resume' }, { mode: 'attention', time: {} },
       { mode: 'attention', after: ['r1', 'r1'] }, { target_ref: 42 },
-      { mode: 'attention', goal: 'x'.repeat(4097) },
+      { mode: 'attention', goal: 'x'.repeat(4097) }, { query: ' \n\t ' },
     ]) {
       const result = await memory(runtime, space, { operation: 'recall', input })
       expect(result.error?.code).toBe('InvalidRequestEnvelope')

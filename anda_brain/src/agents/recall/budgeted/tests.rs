@@ -1428,11 +1428,59 @@ async fn selection_only_rejects_an_unadvertised_read() {
     );
     seed(&space, r#"CREATE CONCEPT ?c { TYPE "Event" NAME "Selectorcandidate" SET ATTRIBUTES {summary: "Memory to rank"} }"#, Default::default()).await;
     let output = space.query(SELF_USER_ID, query()).await.unwrap();
-    assert_eq!(
-        output.failed_reason.as_deref(),
-        Some("recall_planner_incomplete")
+    assert!(output.failed_reason.is_none(), "{output:?}");
+    let packet = check_output(&output, 4096).unwrap();
+    assert!(packet.items.iter().any(|item| {
+        item.priority == Priority::Warning && item.content["reason"] == "recall_planner_incomplete"
+    }));
+    assert!(
+        packet
+            .items
+            .iter()
+            .any(|item| item.content["name"] == "Selectorcandidate")
     );
     assert!(output.tools_usage.is_empty());
     assert_eq!(seen.lock().len(), 1);
+    space.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn selection_only_provider_failure_preserves_native_candidates() {
+    let (_, space, seen) = setup("selector_fallback", Behavior::ProviderFailure).await;
+    let graph = seed(
+        &space,
+        r#"CREATE CONCEPT ?c {TYPE "Event" NAME "Selectorcandidate" SET ATTRIBUTES {summary: "Memory to rank"}}"#,
+        Default::default(),
+    )
+    .await;
+    let output = space
+        .query(
+            SELF_USER_ID,
+            StringOr::Value(RecallInput {
+                query: "Selectorcandidate".into(),
+                budget: Some(limits(4096, 32_768)),
+                ..Default::default()
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(output.failed_reason.is_none(), "{output:?}");
+    assert!(!output.content.contains(LEAK));
+    let packet = check_output(&output, 4096).unwrap();
+    assert!(packet.items.iter().any(|item| {
+        item.priority == Priority::Warning && item.content["reason"] == "recall_model_unavailable"
+    }));
+    assert!(
+        packet
+            .items
+            .iter()
+            .any(|item| item.content["id"] == graph["handles"]["c"])
+    );
+    {
+        let seen = seen.lock();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].tools.len(), 1);
+        assert_eq!(seen[0].tools[0].name, SELECT);
+    }
     space.close().await.unwrap();
 }
