@@ -1,6 +1,6 @@
 {
   "name": "@ldclabs/anda-brain-worker",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "A compact Anda Brain implementation for Cloudflare Workers and SQLite Durable Objects.",
   "type": "module",
   "private": true,

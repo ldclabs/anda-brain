@@ -4,15 +4,22 @@ All notable changes to the Anda Brain project.
 
 ## [Unreleased]
 
+## [0.13.7] — 2026-11-19
+
+The Rust service, Go CLI and integration skill share version 0.13.7. The
+Cloudflare Worker package is 0.1.3.
+
 ### Dependencies
 
-- The Rust service uses KIP and Cognitive Nexus 0.14.6, tracking KIP `f63848e`
+- The Rust service uses `anda_kip` and `anda_cognitive_nexus` 0.14.6, tracking KIP `f63848e`
   and the `cognitive-memory@2.0.0` revision with content digest `sha256:6639aa46…`.
   Formation, Recall and Maintenance load the upstream standard vocabulary card.
   Both reference tools expose it as `document="vocabulary"`. The Worker uses
   `@ldclabs/kip-do` 0.14.6 and `@ldclabs/kip-lang` 2.4.3. Restart any KIP
   query pagination opened under the previous Worker engine. `CHANGES` can
   continue from its saved sequence.
+- The Rust lockfile resolves `anda_db` 0.14.3, `anda_core` 0.17.2 and
+  `anda_engine` 0.17.5.
 
 ### Fixed
 
@@ -43,6 +50,8 @@ All notable changes to the Anda Brain project.
   confirmed result, including `no_effect`.
 - CLI recall merges explicit and saved receipts once. A full session stops a new
   mutation before submission. A local session-file error still prints the server's receipt.
+- The CLI requires `--stream` and `--event` together when staging an ordered
+  source. Ordinal and predecessor receipt flags require that stream.
 - The standalone draft-Space migration checks its source snapshot with the draft engine,
   preserves Concept canonical IDs and returns a failure if the rebuilt counts differ.
   It computes import chunks once and copies records only into the chunks that need them.

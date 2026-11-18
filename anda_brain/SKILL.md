@@ -7,7 +7,7 @@ description: |
   asks to use Anda Brain. Observer ingestion, runtime installation and trust
   governance require separate trusted-host authority.
 metadata:
-  version: 0.13.6
+  version: 0.13.7
   url: https://github.com/ldclabs/anda-brain/blob/main/skills/anda-brain/SKILL.md
   keywords:
     - long-term memory
