@@ -396,7 +396,11 @@ the same packet and `memory_budget` reports its count; extra trace citations are
 not copied outside the packet. Treat `budget_insufficient` or literal `null`
 with `failed_reason` as unusable/incomplete. `semantic_complete` and
 `action_ready` remain false; this packet is not a Memory Interface briefing.
-Each query has host-side concept discovery before selection. Compact views
+The host resolves `context.counterparty` by its Person key and follows accepted
+relationships for one more hop from the search hits or that Person. Keep the
+individual claims and their attribution when answering a multi-hop question. If
+a read-planning request cannot fit, the model may still select existing IDs
+under the same input cap. Compact views
 carry `recall_detail` references for omitted fields; fetch projected attributes
 when more detail is needed. Pending/blocked commitments and warnings remain
 mandatory. A `bounded` packet can be partial: inspect coverage and warning

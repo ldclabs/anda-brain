@@ -1230,8 +1230,9 @@ async fn discovered_concepts_deliver_their_claims_and_final_beliefs_without_mode
     ] {
         seed(&space, command, parameters.clone()).await;
     }
-    // One planning pass that selects, then a budget too small for any model call.
-    for context_tokens in [131_072, 1] {
+    // The Bot's product search allows one 32K planning budget. An explicitly
+    // smaller budget must still return the same grounded claims without a call.
+    for context_tokens in [131_072, 32_768, 1] {
         let output = space
             .query(
                 SELF_USER_ID,
@@ -1297,6 +1298,141 @@ async fn discovered_concepts_deliver_their_claims_and_final_beliefs_without_mode
                 .is_some_and(|s| s.ends_with("/SleepTask"))
         }));
     }
+    {
+        let seen = requests.lock();
+        assert_eq!(seen.len(), 2);
+        let selection = &seen[1];
+        assert_eq!(selection.tools.len(), 1);
+        assert_eq!(selection.tools[0].name, SELECT);
+        let counted = budget::count(&normalized_request(selection).unwrap()).unwrap();
+        assert!(counted <= 32_768, "{counted}-token selection request");
+        for reference in [
+            anda_kip::KIP_SYNTAX,
+            anda_kip::COGNITIVE_MEMORY_PROFILE,
+            anda_kip::KIP_RECALL_CARD,
+            anda_kip::KIP_VOCABULARY_CARD,
+        ] {
+            assert_eq!(selection.instructions.matches(reference).count(), 1);
+        }
+    }
+    space.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn host_discovery_follows_one_supported_relation_and_resolves_the_counterparty_by_key() {
+    let (_, space, requests) = setup("bounded_relation_path", Behavior::Select).await;
+    for definition in [
+        r#"DEFINE CONCEPT TYPE "Project" {description: "A named project."}"#,
+        r#"DEFINE CONCEPT TYPE "Team" {description: "A named team."}"#,
+        r#"DEFINE PREDICATE "owned_by" {description: "The team owning a project.", subject: {concept_types: ["Project"]}, object: {concept_types: ["Team"]}}"#,
+        r#"DEFINE PREDICATE "leads" {description: "A person leads a team.", subject: {concept_types: ["Person"]}, object: {concept_types: ["Team"]}}"#,
+    ] {
+        seed(&space, definition, Default::default()).await;
+    }
+    let graph = seed(&space, r#"MUTATE {
+        CREATE CONCEPT ?project {TYPE "Project" NAME "Larch"}
+        CREATE CONCEPT ?team {TYPE "Team" NAME "Payments"}
+        CREATE CONCEPT ?other {TYPE "Team" NAME "Shipping"}
+        UPSERT CONCEPT ?lead {MATCH {type: "Person", key: "owner-key"} SET FIELDS {name: "Morgan Reyes"}}
+        CREATE CONCEPT ?outsider {TYPE "Person" NAME "Other Morgan"}
+        ASSERT ?first (?project, "owned_by", ?team) {by: ?lead, mode: "stated"}
+        ASSERT ?second (?lead, "leads", ?team) {by: ?lead, mode: "stated"}
+        ASSERT ?negative (?project, "owned_by", ?other) {by: ?lead, mode: "stated", stance: "reject"}
+        ASSERT ?unrelated (?outsider, "leads", ?other) {by: ?outsider, mode: "stated"}
+    }"#, Default::default()).await;
+    let handles = &graph["handles"];
+    // The initial search can only find the named project. Its team's leader needs a second edge.
+    let hits = space
+        .execute_kip_readonly(kip::request_with(
+            "SEARCH CONCEPT :query LIMIT 16",
+            kip::param("query", "Larch"),
+        ))
+        .await
+        .unwrap();
+    let hits = kip::ok_result(&hits).unwrap()["hits"].as_array().unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0]["element"]["id"], handles["project"]);
+    for (query, counterparty, context_tokens) in [
+        ("Larch", None, 1),
+        ("Larch", None, 32_768),
+        ("我带的是哪个团队？", Some("owner-key"), 1),
+    ] {
+        let result = space
+            .query_structured(
+                SELF_USER_ID,
+                StringOr::Value(RecallInput {
+                    query: query.into(),
+                    context: counterparty.map(|key| crate::types::InputContext {
+                        counterparty: Some(key.into()),
+                        source: Some("memory-product-search".into()),
+                        ..Default::default()
+                    }),
+                    budget: Some(limits(4096, context_tokens)),
+                }),
+            )
+            .await
+            .unwrap();
+        assert!(result.failed_reason.is_none());
+        let packet: MemoryPacket = serde_json::from_str(&result.answer).unwrap();
+        assert_eq!(
+            result.memory_budget.unwrap().tokens,
+            budget::count(&result.answer).unwrap()
+        );
+        let claims: Vec<_> = packet
+            .items
+            .iter()
+            .filter(|i| i.content["kind"] == "claim")
+            .map(|i| &i.content)
+            .collect();
+        for key in ["first", "second"] {
+            assert_eq!(
+                claims
+                    .iter()
+                    .filter(|c| c["assertion"] == handles[key] && c["belief"] == "accepted")
+                    .count(),
+                1,
+                "{claims:?}"
+            );
+        }
+        assert!(
+            !claims
+                .iter()
+                .any(|c| c["assertion"] == handles["unrelated"]),
+            "{claims:?}"
+        );
+        assert!(!packet.action_ready && !packet.semantic_complete);
+    }
     assert_eq!(requests.lock().len(), 1);
+    space.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn selection_only_rejects_an_unadvertised_read() {
+    let (_, space, seen) = setup(
+        "selector_fences_reads",
+        Behavior::ReadThenSelect(vec![tool("execute_kip_readonly", "DESCRIBE PRIMER")]),
+    )
+    .await;
+    let query = || {
+        StringOr::Value(RecallInput {
+            query: "Selectorcandidate".into(),
+            budget: Some(limits(4096, 32_768)),
+            ..Default::default()
+        })
+    };
+    let empty = space.query(SELF_USER_ID, query()).await.unwrap();
+    assert!(empty.failed_reason.is_none());
+    assert!(
+        seen.lock().is_empty(),
+        "no native candidate needs selection"
+    );
+    seed(&space, r#"CREATE CONCEPT ?c { TYPE "Event" NAME "Selectorcandidate" SET ATTRIBUTES {summary: "Memory to rank"} }"#, Default::default()).await;
+    let output = space.query(SELF_USER_ID, query()).await.unwrap();
+    assert_eq!(
+        output.failed_reason.as_deref(),
+        Some("recall_planner_incomplete")
+    );
+    assert!(output.tools_usage.is_empty());
+    assert_eq!(seen.lock().len(), 1);
     space.close().await.unwrap();
 }

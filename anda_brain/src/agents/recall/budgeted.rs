@@ -4,6 +4,7 @@
 //! Opaque provider history and a generic runner's automatic tool loop never
 //! carry unbudgeted material into another model invocation.
 use super::*;
+use crate::agents::prompts::budgeted_recall_prompt;
 use crate::recall_budget::{self as budget, Channel, Coverage, MemoryItem, Priority, RecallBudget};
 use anda_core::{ContentPart, ToolInput, Usage};
 use anda_kip::{Command, KipValue, MetaCommand, Request, Scalar};
@@ -11,45 +12,13 @@ use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 mod compact;
+mod discovery;
 
 const MAX_CALLS: usize = 16;
 const MAX_CALLS_PER_TURN: usize = 4;
 const MAX_ROWS: usize = 32;
 const MAX_BYTES: usize = 1024 * 1024;
 const SELECT: &str = "select_recall_items";
-/// The host's instructions for one budgeted planning pass.
-const BUDGET_MODE: &str = "You are selecting an authorized memory packet for another agent. \
-    Read only through the listed tools, then call select_recall_items with existing memory item \
-    IDs. Initial query_search IDs are question-matched candidates, not proof of relevance. Select \
-    items that answer the question; use further reads when these candidates and the profile do \
-    not cover it. Compact views explicitly name omitted fields; project the original attributes \
-    or facet through KQL for details. The KIP tool supports only KQL and SEARCH in this mode (up \
-    to 4 operations, LIMIT at most 32); other META commands are unavailable and the current \
-    Primer is already supplied. Wiki search uses at most 8 hits without neighbor expansion. At \
-    most 4 tool calls per pass and 16 per Recall are allowed. You cannot add content or choose \
-    priorities. No free-form answer, grades or completeness claims will be delivered. Preserve \
-    native uncertainty, conflicts and warnings. Unchecked channels are unknown, not absent. Each \
-    pass receives the entire currently admitted snapshot; previous provider history is \
-    intentionally not replayed.";
-/// Question-matched Concepts the host reads before any model pass.
-const DISCOVERY_HITS: usize = 8;
-/// What memory holds about one discovered Concept: the claims it takes part in, in
-/// either direction, newest first, each with its final belief. A Concept record only
-/// names an entity; the facts about it are Propositions and Assertions, which a
-/// concept search never returns and which a pass that ran out of planning budget
-/// never gets to read.
-const CLAIMS: &str = r#"FIND(?p.id, ?p.subject, ?subject.name, ?predicate, ?p.object, ?object.name,
-     ?belief.status, ?belief.explanation.excluded,
-     ?a.id, ?a.stance, ?a.mode, ?a.asserted_at, ?a.asserted_by, ?actor.name)
-WHERE {
-  ?p (:entity, ?predicate, ?object)
-  UNION { ?p (?subject, ?predicate, :entity) }
-  ?a ASSERTION {proposition: ?p, asserted_by: ?actor}
-  ?belief BELIEF (?p)
-}
-WITH EPISTEMIC {purpose: "answer_user", risk: "low", policy: "kip:memory-default"}
-ORDER BY ?a.asserted_at DESC
-LIMIT 6"#;
 const ALL_CHANNELS: [Channel; 7] = [
     Channel::Primer,
     Channel::Notes,
@@ -135,6 +104,58 @@ impl Material {
         });
         Ok(Some(id))
     }
+    /// Fit the actual provider request by evicting whole optional items, keeping the
+    /// original admission order for ties. Probing a budget never alters the candidate set.
+    fn fit_input(
+        &self,
+        request: &mut CompletionRequest,
+        query: &str,
+        context: Option<&crate::types::InputContext>,
+        observations: &[Json],
+        room: usize,
+    ) -> Result<Option<(usize, BTreeSet<String>)>, BoxError> {
+        let mut order: Vec<_> = self
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.priority > Priority::Warning)
+            .map(|(i, _)| i)
+            .collect();
+        order.sort_by_key(|&i| std::cmp::Reverse((self.items[i].priority, i)));
+        let fit = budget::longest_fitting(0, order.len(), |kept| -> Result<_, BoxError> {
+            let mut coverage = self.coverage.clone();
+            let mut hidden = vec![false; self.items.len()];
+            for &i in &order[..order.len() - kept] {
+                hidden[i] = true;
+                omit(&mut coverage, self.items[i].channel);
+            }
+            let items: Vec<_> = self
+                .items
+                .iter()
+                .zip(hidden)
+                .filter_map(|(item, hidden)| (!hidden).then_some(item))
+                .collect();
+            request.prompt = json!({"query": query, "context": context, "memory_items": items,
+                "observations": observations, "coverage": with_unchecked(coverage)})
+            .to_string();
+            let encoded = normalized_request(request)?;
+            if encoded.len() > 4 * MAX_BYTES {
+                return Ok(None);
+            }
+            let tokens = budget::count(&encoded)?;
+            Ok((tokens <= room).then(|| (tokens, std::mem::take(&mut request.prompt))))
+        })?;
+        let Some((kept, (tokens, prompt))) = fit else {
+            return Ok(None);
+        };
+        request.prompt = prompt;
+        let evicted = order[..order.len() - kept]
+            .iter()
+            .map(|&i| self.items[i].id.clone())
+            .collect();
+        Ok(Some((tokens, evicted)))
+    }
+
     fn coverage(&self) -> Coverage {
         with_unchecked(self.coverage.clone())
     }
@@ -314,6 +335,12 @@ impl RecallAgent {
             }
         };
         material.mark(Channel::Counterparty, false);
+        // Product search supplies the caller's Person key even when the question says only “I”.
+        let counterparty_anchor = profile.as_ref().and_then(|person| {
+            person["id"]
+                .as_str()
+                .map(|id| json!({"id":id, "name":person["name"]}))
+        });
         if let Some(profile) = profile {
             material.add(Channel::Counterparty, Priority::Relevant, profile)?;
         } else if parsed
@@ -379,66 +406,13 @@ impl RecallAgent {
         // can finish in one pass. Each hit is a separate optional item so a
         // small packet can keep some useful results without the whole window.
         let mut observations = vec![json!({"primer":primer})];
-        let discovery = self
-            .budget_kip(kip::request_with(
-                "SEARCH CONCEPT :query LIMIT 16",
-                kip::param("query", query),
-            ))
-            .await;
-        material.mark(Channel::Kip, true);
-        let mut discovered = Vec::new();
-        match discovery {
-            Ok(response) if kip::succeeded(&response) => {
-                if let Some(hits) = response
-                    .first_result()
-                    .and_then(|value| value["hits"].as_array())
-                {
-                    let mut seen_claims = BTreeSet::new();
-                    // A SleepTask is the Brain's own queued work, such as the review
-                    // of a draft symbol whose description repeats the question's
-                    // words. It is not memory about the question.
-                    for hit in hits
-                        .iter()
-                        .filter(|hit| !is_sleep_task(&hit["element"]))
-                        .take(DISCOVERY_HITS)
-                    {
-                        let element = &hit["element"];
-                        discover_skills(element, &mut material.skills);
-                        for claim in self.discovered_claims(element, &mut seen_claims).await {
-                            if let Some(id) =
-                                material.add(Channel::Kip, Priority::Relevant, claim)?
-                            {
-                                discovered.push(id);
-                            }
-                        }
-                        if let Some(existing) = material.items.iter().find(|item| {
-                            element["id"].is_string() && item.content["id"] == element["id"]
-                        }) {
-                            discovered.push(existing.id.clone());
-                            continue;
-                        }
-                        let priority = if contains_program(element) {
-                            Priority::UnprovenProcedure
-                        } else {
-                            Priority::Relevant
-                        };
-                        if let Some(id) = material.add(Channel::Kip, priority, element.clone())? {
-                            discovered.push(id);
-                        }
-                    }
-                } else {
-                    material.omit(Channel::Kip);
-                }
-            }
-            _ => {
-                material.omit(Channel::Kip);
-                material.add(
-                    Channel::Kip,
-                    Priority::Warning,
-                    json!({"query_search":"unavailable","meaning":"not evidence of absence"}),
-                )?;
-            }
-        }
+        let discovered = crate::boxed(self.discover_query(
+            query,
+            counterparty_anchor.as_ref(),
+            &mut material,
+            now,
+        ))
+        .await?;
         observations.push(json!({"query_search":{"item_ids":discovered,"partial":true}}));
         conversation.messages.push(json!(Message {
             role: "tool".into(),
@@ -460,15 +434,8 @@ impl RecallAgent {
         let names = self.tool_dependencies();
         let mut tools = ctx.tool_definitions(Some(&names));
         tools.push(selector());
-        let instructions = format!(
-            "{}\n\n# Host budget mode\n{BUDGET_MODE}",
-            super::super::prompts::system_prompt(
-                super::super::prompts::PromptTarget::Recall,
-                &self.prompt
-            )
-        );
         let template = CompletionRequest {
-            instructions,
+            instructions: budgeted_recall_prompt(&self.prompt, false),
             tools,
             tool_choice_required: false,
             // The host bounds the delivered packet below. Keep provider
@@ -487,72 +454,52 @@ impl RecallAgent {
         let mut failed = false;
         let mut finished = false;
         let mut context_spent = 0usize;
-        let mut context_fallback = None;
         for _ in 0..self.max_model_turns().min(8) {
             let mut request = template.clone();
-            // Optional items can be evicted, never a required item/warning,
-            // lowest value first.
-            let visible = material.items.clone();
-            let coverage_before = material.coverage.clone();
-            let mut order: Vec<usize> = (0..visible.len())
-                .filter(|&i| !matches!(visible[i].priority, Priority::Required | Priority::Warning))
-                .collect();
-            order.sort_by(|&a, &b| {
-                (visible[b].priority, &visible[b].id).cmp(&(visible[a].priority, &visible[a].id))
-            });
             let room = (limits.context_tokens as usize).saturating_sub(context_spent);
-            let mut probe = template.clone();
-            // The request that keeps the `kept` optional items evicted last.
-            let fit = |kept: usize| -> Result<Option<(usize, String)>, BoxError> {
-                let evicted = &order[..order.len() - kept];
-                let mut coverage = coverage_before.clone();
-                for &i in evicted {
-                    omit(&mut coverage, visible[i].channel);
-                }
-                let items: Vec<&MemoryItem> = visible
+            let context = parsed.and_then(|input| input.context.as_ref());
+            let mut fit = material.fit_input(&mut request, query, context, &observations, room)?;
+            let selection_only = fit.is_none();
+            if selection_only {
+                // A final selector only helps when it can see optional native records.
+                // Otherwise the host can deliver its reads without a model call.
+                let mut candidates = material
+                    .items
                     .iter()
-                    .enumerate()
-                    .filter(|(i, _)| !evicted.contains(i))
-                    .map(|(_, item)| item)
-                    .collect();
-                probe.prompt = json!({
-                    "query": query,
-                    "context": parsed.and_then(|i| i.context.as_ref()),
-                    "memory_items": items,
-                    "observations": observations,
-                    "coverage": with_unchecked(coverage),
-                })
-                .to_string();
-                let encoded = normalized_request(&probe)?;
-                let tokens = if encoded.len() <= 4 * MAX_BYTES {
-                    budget::count(&encoded)?
-                } else {
-                    usize::MAX
-                };
-                Ok((tokens <= room).then(|| (tokens, std::mem::take(&mut probe.prompt))))
-            };
-            let evicted = match budget::longest_fitting(0, order.len(), fit)? {
-                Some((kept, (tokens, prompt))) => {
-                    request.prompt = prompt;
-                    context_spent += tokens;
-                    order.len() - kept
+                    .filter(|item| {
+                        item.priority > Priority::Warning
+                            && matches!(
+                                item.channel,
+                                Channel::Counterparty
+                                    | Channel::Kip
+                                    | Channel::Wiki
+                                    | Channel::Procedures
+                            )
+                    })
+                    .peekable();
+                if candidates.peek().is_some() {
+                    request.instructions = budgeted_recall_prompt(&self.prompt, true);
+                    request.tools = vec![selector()];
+                    fit = material
+                        .fit_input(&mut request, query, context, &[], room)?
+                        .filter(|(_, evicted)| candidates.any(|item| !evicted.contains(&item.id)));
                 }
-                None => {
-                    failed = true;
-                    material.failure = Some("recall_context_budget_exhausted");
-                    order.len()
-                }
+            }
+            let Some((tokens, evicted)) = fit else {
+                failed = true;
+                material.failure = Some("recall_context_budget_exhausted");
+                break;
             };
-            for &i in &order[..evicted] {
-                material.omit(visible[i].channel);
-                // Also remove it from the final candidate pool: selection
-                // cannot reference a record the planner was denied here.
-                material.items.retain(|item| item.id != visible[i].id);
-            }
-            if failed {
-                context_fallback = Some((visible, coverage_before));
-            }
-            if failed || material.critical_missing {
+            context_spent += tokens;
+            // Evict only after admission so a host-only fallback retains its reads.
+            material.items.retain(|item| {
+                if evicted.contains(&item.id) {
+                    omit(&mut material.coverage, item.channel);
+                    return false;
+                }
+                true
+            });
+            if material.critical_missing {
                 failed = true;
                 break;
             }
@@ -620,7 +567,7 @@ impl RecallAgent {
                     }
                     break;
                 }
-                if !names.contains(&tool.name) {
+                if selection_only || !names.contains(&tool.name) {
                     failed = true;
                     break;
                 }
@@ -752,10 +699,6 @@ impl RecallAgent {
         // never invent a summary or promote a procedure into executable standing.
         if material.failure == Some("recall_context_budget_exhausted") && !material.critical_missing
         {
-            if let Some((items, coverage)) = context_fallback {
-                material.items = items;
-                material.coverage = coverage;
-            }
             // Without model planning, return structured query candidates and
             // constraints, not opaque notes or prior conversational narratives.
             for channel in [Channel::Notes, Channel::History] {
@@ -804,39 +747,6 @@ impl RecallAgent {
         .await
     }
 
-    /// The claims a discovered Concept takes part in, as compact packet items. A failed
-    /// or empty read adds nothing: the Concept record is still delivered, and the
-    /// channel is already marked partial.
-    async fn discovered_claims(&self, element: &Json, seen: &mut BTreeSet<String>) -> Vec<Json> {
-        let Some(id) = element["id"].as_str() else {
-            return Vec::new();
-        };
-        let response = self
-            .budget_kip(kip::request_with(
-                CLAIMS,
-                kip::param("entity", json!({"id": id})),
-            ))
-            .await;
-        let Ok(response) = response else {
-            return Vec::new();
-        };
-        if !kip::succeeded(&response) {
-            return Vec::new();
-        }
-        response
-            .first_result()
-            .and_then(Json::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|row| claim_item(row, element))
-            .filter(|claim| {
-                claim["assertion"]
-                    .as_str()
-                    .is_some_and(|assertion| seen.insert(assertion.to_owned()))
-            })
-            .collect()
-    }
-
     async fn budget_kip(&self, mut request: Request) -> Result<Response, BoxError> {
         let _guard = if let Some(control) = &self.product_control {
             let guard = control.gate.read().await;
@@ -853,7 +763,10 @@ impl RecallAgent {
         self.clock.bind_read(&mut request)?;
         Ok(timeout(
             READONLY_KIP_TIMEOUT,
-            kip::execute_readonly_request(self.memory.nexus().as_ref(), &request),
+            crate::boxed(kip::execute_readonly_request(
+                self.memory.nexus().as_ref(),
+                &request,
+            )),
         )
         .await
         .map_err(|_| "bounded KIP read timed out")?)
@@ -1177,74 +1090,6 @@ fn expire_procedure_checks(items: &mut [MemoryItem], business_now: u64, all: boo
         }
     }
     changed
-}
-
-fn is_sleep_task(element: &Json) -> bool {
-    element["schema_ref"]
-        .as_str()
-        .is_some_and(|schema| schema.ends_with("/SleepTask"))
-}
-
-/// One `CLAIMS` row as a packet item. `entity` is the discovered Concept the row was
-/// read for; it stands at whichever endpoint the row left unbound.
-fn claim_item(row: &Json, entity: &Json) -> Option<Json> {
-    let [
-        proposition,
-        subject,
-        subject_name,
-        predicate,
-        object,
-        object_name,
-        belief,
-        excluded,
-        assertion,
-        stance,
-        mode,
-        asserted_at,
-        asserted_by,
-        actor_name,
-    ] = row.as_array()?.as_slice()
-    else {
-        return None;
-    };
-    // A Concept endpoint is delivered with its name; a Literal object is itself.
-    let endpoint = |reference: &Json, name: &Json| -> Json {
-        let Some(id) = reference.get("id") else {
-            return reference.clone();
-        };
-        let name = if name.is_null() && *id == entity["id"] {
-            &entity["name"]
-        } else {
-            name
-        };
-        json!({"id": id, "name": name})
-    };
-    let mut item = json!({
-        "kind": "claim",
-        "subject": endpoint(subject, subject_name),
-        "predicate": predicate,
-        "object": endpoint(object, object_name),
-        "belief": belief,
-        "stance": stance,
-        "mode": mode,
-        "asserted_at": asserted_at,
-        "asserted_by": endpoint(asserted_by, actor_name),
-        "proposition": proposition,
-        "assertion": assertion,
-    });
-    // Why this Assertion does not count toward the belief, such as a value that a
-    // later one succeeded: the status alone reads as "nothing is known".
-    let reasons: Vec<&Json> = excluded
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|entry| entry["assertion_id"] == *assertion)
-        .map(|entry| &entry["reason"])
-        .collect();
-    if !reasons.is_empty() {
-        item["excluded"] = json!(reasons);
-    }
-    Some(item)
 }
 
 fn contains_program(value: &Json) -> bool {

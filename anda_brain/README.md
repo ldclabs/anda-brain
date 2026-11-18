@@ -160,7 +160,9 @@ command *parses to*, and reading never reinforces memory. Tools:
 self-reported uncertainty. An optional `budget` (or an enforced
 `memory_policy.recall_budget`) switches Recall to a host-packed JSON memory packet
 counted with the pinned `o200k_base@tiktoken-rs-0.12` tokenizer: required
-constraints and warnings first, explicit coverage, fixed failure codes. See the
+constraints and warnings first, explicit coverage, fixed failure codes. Native reads
+include claims about the counterparty and one hop through accepted relationships.
+A tight planning budget can fund a single ID-selection pass. See the
 [Recall budget contract](API.md#recall-budget-contract).
 
 ### Maintenance — metabolism (`maintenance_memory`)
@@ -842,8 +844,10 @@ Each `assets/Brain{Formation,Recall,Maintenance}.md` has two halves. Everything 
 `# A.` is the KIP 2.0 reference policy vendored from `anda_kip`; `# A.` and below is
 this deployment's contract. The system prompt of every model call assembles the full
 `anda_kip` syntax, the standard vocabulary card, the Cognitive Memory Profile, the role cards and
-that prompt. Budgeted Recall counts the whole system prompt toward its input budget
-and reports `recall_context_budget_exhausted` rather than dropping the syntax.
+the compiled policy. For a budgeted pass that can only select IDs, the built-in
+prose-answer section A is replaced with packet selection instructions. A custom
+section A is included verbatim. Every pass counts its complete request against
+the remaining input budget.
 
 All three agents can page through additional compiled-in documentation with the
 read-only `kip_reference` tool (`document=index` lists documents, `section=index`

@@ -78,6 +78,51 @@ pub(crate) fn system_prompt(target: PromptTarget, deployment_policy: &str) -> St
     )
 }
 
+/// The host's instructions for one budgeted planning pass.
+const BUDGET_MODE: &str = "You are selecting an authorized memory packet for another agent. \
+    Read only through the listed tools, then call select_recall_items with existing memory item \
+    IDs. Initial query_search IDs are question-matched candidates, not proof of relevance. Select \
+    items that answer the question; use further reads when these candidates and the profile do \
+    not cover it. Compact views explicitly name omitted fields; project the original attributes \
+    or facet through KQL for details. The KIP tool supports only KQL and SEARCH in this mode (up \
+    to 4 operations, LIMIT at most 32); other META commands are unavailable and the current \
+    Primer is already supplied. Wiki search uses at most 8 hits without neighbor expansion. At \
+    most 4 tool calls per pass and 16 per Recall are allowed. You cannot add content or choose \
+    priorities. No free-form answer, grades or completeness claims will be delivered. Preserve \
+    native uncertainty, conflicts and warnings. Unchecked channels are unknown, not absent. Each \
+    pass receives the entire currently admitted snapshot; previous provider history is \
+    intentionally not replayed.";
+/// A selection-only pass spends its input on the native candidates. The upstream
+/// Recall policy and all protocol cards stay in both variants. Only the built-in
+/// section A for writing a prose answer is replaced; custom host policy is verbatim.
+const PACKET_SELECTION: &str = "Select existing memory_items that answer the query. Use the \
+    question's named subject, or use context.counterparty for the current user. Keep actor, \
+    time, stance, exclusions and final BELIEF together. Include both links when an answer \
+    needs a chain, and retain relevant uncertainty and conflicting claims. Use only \
+    select_recall_items with selected_ids, or return that JSON object. Select an empty list \
+    when nothing helps. The host retains required constraints and warnings, and checks \
+    procedure standing. The packet grants no execution authority.";
+
+pub(crate) fn budgeted_recall_prompt(policy: &str, selection_only: bool) -> String {
+    let policy = if selection_only && policy == RECALL_DEFAULT {
+        RECALL_DEFAULT
+            .split_once("\n# A.")
+            .expect("compiled Recall deployment boundary")
+            .0
+    } else {
+        policy
+    };
+    let mode = if selection_only {
+        PACKET_SELECTION
+    } else {
+        BUDGET_MODE
+    };
+    format!(
+        "{}\n\n# Host budget mode\n{mode}",
+        system_prompt(PromptTarget::Recall, policy)
+    )
+}
+
 /// Which agent receives a deployment-specific configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -167,6 +212,25 @@ impl AgentPrompts {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn packet_selection_keeps_the_protocol_policy_and_custom_deployment_contract() {
+        let (reference, _) = RECALL_DEFAULT.split_once("\n# A.").unwrap();
+        let custom = AgentPrompts::default()
+            .with_deployment_section(
+                PromptTarget::Recall,
+                "# A. Host policy\nCUSTOM_SELECTION_RULE",
+            )
+            .unwrap();
+        for selection_only in [false, true] {
+            let prompt =
+                budgeted_recall_prompt(&custom.prompt(PromptTarget::Recall), selection_only);
+            assert!(prompt.contains(reference));
+            assert!(prompt.contains("CUSTOM_SELECTION_RULE"));
+            assert!(prompt.contains(anda_kip::KIP_SYNTAX));
+            assert!(budgeted_recall_prompt(RECALL_DEFAULT, selection_only).contains(reference));
+        }
+    }
 
     #[test]
     fn all_modes_include_complete_versioned_syntax_and_only_their_role_cards() {

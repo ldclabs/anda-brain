@@ -85,6 +85,10 @@ one Space — what the support agent learns, the sales agent can recall.
 | **Recall** | Plans read-only graph queries for a question, follows relationships across hops, and answers with what memory actually supports — including "contested" and "insufficient". | Remembering |
 | **Maintenance** | Consolidates events into knowledge, reviews identity and contradictions, re-checks what depended on a revised claim, reviews retention, commitments and new vocabulary. | Sleep |
 
+With a Recall budget, a question can still retrieve a project’s team and the person
+leading it before the model makes any tool calls. The returned packet carries the
+individual claims, who asserted them and the engine’s belief status.
+
 ### What memory looks like (KIP 2.0)
 
 KIP 2.0 separates meaning, belief, evidence and provenance. The rule everything else

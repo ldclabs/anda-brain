@@ -16,6 +16,12 @@ All notable changes to the Anda Brain project.
 
 ### Fixed
 
+- Budgeted Recall can use Anda Bot’s 32,768-token planner allowance to select
+  existing memory IDs when the full read planner cannot fit. Both request
+  forms retain the complete protocol reference and custom host policy. Native
+  discovery reads up to four claim pages concurrently, includes the explicitly
+  keyed counterparty, and follows one supported relationship hop. Results retain
+  their search order, attribution, final beliefs and original token limits.
 - Budgeted Recall delivers what memory holds about the Concepts it finds. The host's
   question search returned Concept records only, so a packet could name `Project Birch`
   without the claim that it releases on Tuesday: facts live in Propositions and

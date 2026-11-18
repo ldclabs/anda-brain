@@ -388,14 +388,23 @@ than a free-form answer. `memory_policy.recall_budget` can enforce the same
 limits for every Recall; a request may tighten them but cannot raise or disable
 the policy. An absent/null policy and request preserve the legacy response.
 
-Each request first runs a bounded, parameterized concept search for its query.
+The host reads up to six recent claims about each of the first eight matching
+Concepts and the Person resolved from the supplied `context.counterparty` key.
+It follows one additional hop to at most four distinct Concepts connected by
+accepted, supporting relationships. Each claim keeps its native belief and actor.
+The search and claim pages share a 15-second deadline, with up to four claim
+reads in flight. Concurrent reads preserve the search ranking of direct hits
+when assigning candidate IDs.
 Unresolved commitments (`pending`/`blocked`) remain mandatory; terminal
 commitments are optional historical candidates. Returned element views retain
 IDs, versions and provenance, omit duplicate LegacyRecord bodies, and list
 omitted fields in `recall_detail`. Required attributes and native procedure
-checks are never summarized away. The complete Primer remains planning context;
-the delivered packet carries its compact execution basis. Explicit KQL field
-projections can fetch details when needed.
+checks are preserved. The read planner receives the complete Primer. If that
+request exceeds the remaining cumulative input budget even after optional items
+are removed, the model can select IDs directly from the host’s candidates. This
+smaller request carries the fresh execution basis in the packet items and offers
+only the selection tool. Both modes count the full KIP syntax, Profile, vocabulary
+and role cards. Explicit host deployment overrides are preserved in both.
 
 Whole optional candidates are admitted independently; `coverage.partial` and
 `coverage.omitted` identify incomplete delivery. If the cumulative model-input
