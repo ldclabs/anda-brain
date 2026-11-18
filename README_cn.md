@@ -16,8 +16,9 @@ Anda Brain 是一个自托管的 LLM 智能体记忆服务。智能体把观察�
 - **Recall（记忆召回）**：用记忆回答自然语言问题。
 - **Maintenance（记忆维护）**：在空闲时整合、复核并退役记忆。
 
-当前版本：**0.13.4**，对齐 KIP `11a82ec` 与 Cognitive Memory Profile
-`kip://profiles/cognitive-memory@2.0.0`。变更见 [CHANGELOG](./CHANGELOG.md)。
+当前源码对齐 KIP `f63848e` 与 Cognitive Memory Profile
+`kip://profiles/cognitive-memory@2.0.0`，内容摘要为 `sha256:6639aa46…`。
+已发布版本见[变更记录](./CHANGELOG.md)。
 
 ---
 

@@ -326,6 +326,15 @@ func TestKipBatchRequestAndResponse(t *testing.T) {
 	if response.Failure() == nil {
 		t.Fatal("operation-level failure was not detected")
 	}
+	response.Status = "succeeded"
+	response.Results = []KipOperationResult[any]{{Status: "succeeded"}, {Status: "no_effect"}}
+	if err := response.Failure(); err != nil {
+		t.Fatal(err)
+	}
+	response.Results[1].Status = "skipped"
+	if response.Failure() == nil {
+		t.Fatal("a skipped operation cannot confirm a successful batch")
+	}
 }
 
 func TestCurrentSpaceAndConceptFieldsSurviveDecode(t *testing.T) {

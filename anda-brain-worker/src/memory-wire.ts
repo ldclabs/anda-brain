@@ -5,6 +5,7 @@
  * `anda_kip::memory::binding` in the Rust Brain.
  */
 import { isJsonMap } from '@ldclabs/kip-do'
+import { validateValue } from '@ldclabs/kip-do/schema'
 
 export const KIP_MEMORY = '2.0'
 export const MAX_AFTER = 128
@@ -111,87 +112,21 @@ export function descriptor(spaceId?: string): Descriptor {
   }
 }
 
-const OPERATIONS = new Set<Operation>(['observe', 'recall', 'revise', 'feedback', 'forget'])
-const BUNDLES = new Set<Bundle>(['memory_basic', 'memory_experience', 'memory_learning'])
-const MUTATIONS = new Set<Operation>(['observe', 'revise', 'feedback', 'forget'])
-const REQUEST_KEYS = new Set(['kip_memory', 'request_id', 'operation', 'space', 'scope', 'budget', 'idempotency_key', 'requires', 'input'])
-const INPUT_KEYS: Record<Operation, Set<string>> = {
-  observe: new Set(['source_ref']),
-  recall: new Set(['query', 'target_ref', 'mode', 'goal', 'context', 'after', 'detail', 'time', 'attention_cursor']),
-  revise: new Set(['source_ref', 'target_ref', 'change_kind']),
-  feedback: new Set(['source_ref', 'decision_ref', 'attempt_ref']),
-  forget: new Set(['target_ref', 'mode']),
-}
+const REQUEST_SCHEMA = { $ref: 'urn:kip:2.0:schema:memory#/$defs/Request' }
+const BUNDLES = new Set<string>(['memory_basic', 'memory_experience', 'memory_learning'])
 
-const invalid = (message: string): never => { throw new MemoryError('InvalidRequestEnvelope', message) }
-const isRef = (value: unknown): value is string =>
-  typeof value === 'string' && value.length > 0 && value.length <= 1024
-
-/**
- * The envelope rules of the schema (MI §3): the version, a key on every
- * mutation and none on a recall, known members only, and each input's own
- * shape. A binding request never reaches a KQL/KML parser.
- */
+/** Validate the wire shape with the engine's compiled KIP schema before dispatch. */
 export function parseMemoryRequest(value: unknown): MemoryRequest {
-  if (!isJsonMap(value)) return invalid('a Memory Interface request is an object')
-  for (const key of Object.keys(value)) if (!REQUEST_KEYS.has(key)) invalid(`unknown request member ${key}`)
-  if (value.kip_memory !== KIP_MEMORY) invalid(`kip_memory must be "${KIP_MEMORY}"`)
-  const operation = value.operation as Operation
-  if (!OPERATIONS.has(operation)) invalid('unknown operation')
-  if (value.request_id !== undefined && !isRef(value.request_id)) invalid('request_id is a reference')
-  if (MUTATIONS.has(operation) && !isRef(value.idempotency_key)) invalid(`${operation} is a mutation and requires an idempotency_key`)
-  if (!MUTATIONS.has(operation) && value.idempotency_key !== undefined) invalid('recall is read-only and takes no idempotency_key')
-  if (value.requires !== undefined && (!Array.isArray(value.requires) || value.requires.some(b => typeof b !== 'string'))) invalid('requires lists level names')
-  if (value.scope !== undefined) {
-    if (!isJsonMap(value.scope)) invalid('scope is an object')
-    const scope = value.scope as Record<string, unknown>
-    for (const key of Object.keys(scope)) if (key !== 'task_ref' && key !== 'context_refs') invalid(`unknown scope member ${key}`)
-    if (scope.task_ref !== undefined && !isRef(scope.task_ref)) invalid('task_ref is a reference')
-    if (scope.context_refs !== undefined && (!Array.isArray(scope.context_refs) || !scope.context_refs.every(isRef))) invalid('context_refs are references')
+  if (!isJsonMap(value)) throw new MemoryError('InvalidRequestEnvelope', 'a Memory Interface request is an object')
+  // MI §3 gives an unknown level a capability error even though Bundle is an enum.
+  if (Array.isArray(value.requires)) {
+    const unknown = value.requires.find(level => typeof level === 'string' && !BUNDLES.has(level))
+    if (unknown !== undefined) throw new MemoryError('UnsupportedCapability', `unknown memory level ${unknown}`)
   }
-  if (value.budget !== undefined) {
-    if (!isJsonMap(value.budget)) invalid('budget is an object')
-    const budget = value.budget as Record<string, unknown>
-    for (const key of ['max_output_tokens', 'deadline_ms']) {
-      if (budget[key] !== undefined && (!Number.isSafeInteger(budget[key]) || (budget[key] as number) < 1)) invalid(`${key} is a positive integer`)
-    }
-  }
-  if (!isJsonMap(value.input)) invalid('input is an object')
-  const input = value.input as Record<string, unknown>
-  for (const key of Object.keys(input)) if (!INPUT_KEYS[operation].has(key)) invalid(`unknown ${operation} input member ${key}`)
-  switch (operation) {
-    case 'observe':
-      if (!isRef(input.source_ref)) invalid('observe needs a source_ref')
-      break
-    case 'revise':
-      if (!isRef(input.source_ref)) invalid('revise needs a source_ref')
-      if (input.target_ref !== undefined && !isRef(input.target_ref)) invalid('target_ref is a reference')
-      if (input.change_kind !== undefined && !['correction', 'world_change', 'misrecorded', 'unspecified'].includes(input.change_kind as string)) invalid('unknown change_kind')
-      break
-    case 'feedback':
-      for (const key of ['source_ref', 'decision_ref', 'attempt_ref']) {
-        if ((key === 'source_ref' || input[key] !== undefined) && !isRef(input[key])) invalid(`${key} is a reference`)
-      }
-      break
-    case 'forget':
-      if (!isRef(input.target_ref)) invalid('forget needs a target_ref')
-      if (input.mode !== 'payload_only' && input.mode !== 'semantic') invalid('forget mode is payload_only or semantic')
-      break
-    case 'recall': {
-      const mode = input.mode ?? 'answer'
-      if (!['answer', 'action', 'resume', 'attention'].includes(mode as string)) invalid('unknown recall mode')
-      if (input.after !== undefined && (!Array.isArray(input.after) || input.after.length > MAX_AFTER || !input.after.every(isRef))) invalid(`after lists at most ${MAX_AFTER} receipts`)
-      if (input.detail !== undefined && input.detail !== 'brief' && input.detail !== 'evidence') invalid('detail is brief or evidence')
-      if (input.query === undefined && input.target_ref === undefined && mode !== 'attention' && mode !== 'resume') invalid('recall needs a query, a target_ref or mode attention')
-      if (input.query !== undefined && (typeof input.query !== 'string' || !input.query.trim())) invalid('query is non-empty text')
-      if (input.time !== undefined) {
-        if (!isJsonMap(input.time)) invalid('time is an object')
-        const time = input.time as Record<string, unknown>
-        if (time.as_of_seq !== undefined && (!Number.isSafeInteger(time.as_of_seq) || (time.as_of_seq as number) < 0)) invalid('as_of_seq is a sequence')
-        if (time.valid_at !== undefined && (typeof time.valid_at !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(time.valid_at))) invalid('valid_at is a KIP timestamp')
-      }
-      break
-    }
+  try {
+    validateValue(REQUEST_SCHEMA, value)
+  } catch (error) {
+    throw new MemoryError('InvalidRequestEnvelope', errorOf(error).message)
   }
   return value as unknown as MemoryRequest
 }
@@ -203,7 +138,7 @@ export function parseMemoryRequest(value: unknown): MemoryRequest {
 export function checkRequires(request: MemoryRequest): void {
   const required = request.requires?.length ? request.requires : ['memory_basic']
   for (const bundle of required) {
-    if (!BUNDLES.has(bundle as Bundle) || bundle !== 'memory_basic') {
+    if (bundle !== 'memory_basic') {
       throw new MemoryError('UnsupportedCapability', `this binding does not advertise ${bundle}`)
     }
   }

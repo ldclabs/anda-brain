@@ -30,11 +30,11 @@ The service stores memory in an AndaDB-backed Cognitive Nexus and uses KIP 2.0
 (Knowledge Interaction Protocol) internally. Business agents should not need to
 write KIP directly.
 
-The service tracks KIP `11a82ec` and `kip://profiles/cognitive-memory@2.0.0`
-(content digest `sha256:734aa0fd…`; the draft rewrote 2.0.0 in place, so only the
+The service tracks KIP `f63848e` and `kip://profiles/cognitive-memory@2.0.0`
+(content digest `sha256:6639aa46…`; the draft rewrote 2.0.0 in place, so only the
 digest names a revision). It depends on the 0.14 DB/KIP stack and `anda_engine` 0.17
 from crates.io; `Cargo.lock` is the record of resolved versions. Brain needs at
-least `anda_cognitive_nexus` 0.14.2 (0.14.1 cannot open a 0.14.0 store) and
+least `anda_cognitive_nexus` and `anda_kip` 0.14.6 for the current Profile and vocabulary card, and
 `anda_core`/`anda_engine` 0.17 (context traits without remote calls, and a
 `handoff` that queues its own continuation prompt); the reference
 supplement is generated from the locked `anda_kip` (`scripts/sync-kip-reference.mjs`
@@ -62,7 +62,7 @@ library. Keep normal restart, eviction and unresolved-write recovery fully teste
 - `anda_brain/assets/`: agent prompts. The KIP syntax card
   and the Cognitive Memory Profile are **not** copied here — `anda_kip` ships
   them with the protocol, and `agents::prompts::system_prompt()` includes the full
-  syntax, role cards and Profile in every model call, including budgeted Recall.
+  syntax, standard vocabulary card, role cards and Profile in every model call, including budgeted Recall.
 - `anda_brain/src/kip_reference.rs` and `assets/kip-reference/`: bounded reference
   discovery and the generated specification/schema supplement. Its manifest pins
   the published KIP source; do not hand-edit generated reference material.
@@ -379,7 +379,7 @@ pnpm --filter @ldclabs/anda-brain-worker run codegen:prompts
 ```
 
 which re-copies the reference half from `anda_kip` in all six files, copies the
-Worker's verbatim assets (syntax, Profile and the four role/Memory Interface cards),
+Worker's verbatim assets (syntax, Profile, vocabulary and the four role/Memory Interface cards),
 and leaves every `# A.` section untouched. The script uses a sibling `anda-db`
 checkout by default; set `ANDA_KIP_SOURCE` to a downloaded `anda_kip` crate
 directory when syncing to a published version. Edit section A by hand; that is

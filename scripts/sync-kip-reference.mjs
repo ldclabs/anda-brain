@@ -29,7 +29,7 @@ const hashes = {}
 // partially refreshed bundle. Hash the crate-exported context as provenance too.
 const contents = files.map(file => [file, readFileSync(join(source, file))])
 for (const file of [...files, 'KIPSyntax.md', 'profiles/CognitiveMemoryProfile-2.0.md',
-  'brain/KIPRecall.md', 'brain/KIPFormation.md', 'brain/KIPMaintenance.md',
+  'brain/KIPRecall.md', 'brain/KIPFormation.md', 'brain/KIPMaintenance.md', 'brain/KIPVocabulary.md',
   'Cognitive-Consistency.md', 'Memory-Interface.md', 'brain/MemoryInterface.md',
   'brain/Brain-Runtime.md', 'brain/Validated-Learning.md', 'schemas/kip-common.schema.json',
   'schemas/kip-projection.schema.json', 'schemas/kip-memory.schema.json',
@@ -49,6 +49,7 @@ if (process.argv.includes('--worker')) {
     'schemas/kip-request.schema.json': 'schema-request', 'schemas/kip-response.schema.json': 'schema-response',
     'KIPSyntax.md': 'syntax', 'profiles/CognitiveMemoryProfile-2.0.md': 'profile',
     'brain/KIPRecall.md': 'recall', 'brain/KIPFormation.md': 'formation', 'brain/KIPMaintenance.md': 'maintenance',
+    'brain/KIPVocabulary.md': 'vocabulary',
     'Cognitive-Consistency.md': 'consistency', 'Memory-Interface.md': 'memory-interface',
     'brain/MemoryInterface.md': 'memory-interface-card', 'brain/Brain-Runtime.md': 'brain-runtime',
     'brain/Validated-Learning.md': 'validated-learning', 'schemas/kip-common.schema.json': 'schema-common',
@@ -59,6 +60,7 @@ if (process.argv.includes('--worker')) {
   const constants = {
     syntax: ['KIP_SYNTAX', 'KIPSyntax.md'], profile: ['COGNITIVE_MEMORY_PROFILE', 'CognitiveMemoryProfile-2.0.md'],
     recall: ['KIP_RECALL_CARD', 'KIPRecall.md'], formation: ['KIP_FORMATION_CARD', 'KIPFormation.md'],
+    vocabulary: ['KIP_VOCABULARY_CARD', 'KIPVocabulary.md'],
     maintenance: ['KIP_MAINTENANCE_CARD', 'KIPMaintenance.md'], 'memory-interface-card': ['MEMORY_AGENT_CARD', 'MemoryInterface.md'],
   }
   const documents = Object.entries(hashes).map(([file, sha256]) => {

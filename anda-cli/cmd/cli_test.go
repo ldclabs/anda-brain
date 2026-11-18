@@ -198,7 +198,7 @@ func TestCLIFormationAndKIPPreservePayloads(t *testing.T) {
 		data, _ := io.ReadAll(r.Body)
 		bodies <- string(data)
 		if strings.HasSuffix(r.URL.Path, "execute_kip_readonly") {
-			_, _ = w.Write([]byte(`{"kip":"2.0","status":"succeeded","results":[]}`))
+			_, _ = w.Write([]byte(`{"kip":"2.0","status":"succeeded","results":[{"status":"succeeded","result":{}}]}`))
 			return
 		}
 		_, _ = w.Write([]byte(`{"result":{"content":"","conversation":7}}`))

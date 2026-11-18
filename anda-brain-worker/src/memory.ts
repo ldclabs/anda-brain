@@ -38,8 +38,15 @@ export async function handleMemory(env: Env, brain: BrainRpc, spaceId: string, b
   try {
     request = parseMemoryRequest(body)
   } catch (error) {
-    const operation = (body as { operation?: unknown } | null)?.operation
-    return failed({ operation: typeof operation === 'string' ? operation as MemoryRequest['operation'] : 'recall' }, error)
+    const envelope = body as { operation?: unknown; request_id?: unknown } | null
+    const operation = envelope?.operation
+    const requestId = envelope?.request_id
+    return failed({
+      operation: typeof operation === 'string' && ['recall', 'observe', 'revise', 'feedback', 'forget'].includes(operation)
+        ? operation as MemoryRequest['operation'] : 'recall',
+      ...(typeof requestId === 'string' && requestId.length > 0 && requestId.length <= 2048 && [...requestId].length <= 1024
+        ? { request_id: requestId } : {}),
+    }, error)
   }
   try {
     if (request.space && (request.space.uri !== undefined || request.space.id !== spaceId)) {

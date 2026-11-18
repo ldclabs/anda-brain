@@ -72,8 +72,29 @@ describe('Memory Interface', () => {
     expect(legacy.error).toBeUndefined()
     const keyless = await memory(runtime, space, { operation: 'observe', input: { source_ref: 'src-x' } })
     expect(keyless.error.code).toBe('InvalidRequestEnvelope')
+    const future = await memory(runtime, space, { operation: 'recall', request_id: 'req-1', requires: ['future_bundle'], input: { mode: 'attention' } })
+    expect(future.error.code).toBe('UnsupportedCapability')
+    expect(future.request_id).toBe('req-1')
     const described = await call(runtime, space, 'execute_kip_readonly', { command: 'DESCRIBE CAPABILITIES' })
     expect(described.result[0].result.supported.registry.memory_interface.bundles).toEqual(['memory_basic'])
+  })
+
+  it('validates recall at the wire boundary using KIP character and receipt limits', async () => {
+    const runtime = testEnv(new FakeAi([]))
+    const space = uniqueSpace('mi-wire')
+    for (const input of [
+      { mode: 'resume' }, { mode: 'attention', time: {} },
+      { mode: 'attention', after: ['r1', 'r1'] }, { target_ref: 42 },
+      { mode: 'attention', goal: 'x'.repeat(4097) },
+    ]) {
+      const result = await memory(runtime, space, { operation: 'recall', input })
+      expect(result.error?.code).toBe('InvalidRequestEnvelope')
+    }
+    const result = await memory(runtime, space, {
+      operation: 'recall', request_id: '🌏'.repeat(1024), input: { mode: 'attention' },
+    })
+    expect(result.error).toBeUndefined()
+    expect(result.request_id).toBe('🌏'.repeat(1024))
   })
 
   it('stages sources idempotently and observes them once', async () => {

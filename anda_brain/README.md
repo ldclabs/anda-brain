@@ -14,8 +14,8 @@ language over REST or MCP; they never write KIP.
 | [SEMANTIC_WATCH_RUNTIME.md](SEMANTIC_WATCH_RUNTIME.md), [LEARNING_RUNTIME.md](LEARNING_RUNTIME.md), [UTILITY_RUNTIME.md](UTILITY_RUNTIME.md), [TRUST_RUNTIME.md](TRUST_RUNTIME.md) | Optional runtimes (each with a `_cn.md` edition) |
 | [../CHANGELOG.md](../CHANGELOG.md) | Release notes and known limits |
 
-Version 0.13.5 tracks KIP `11a82ec` and `kip://profiles/cognitive-memory@2.0.0`
-(content digest `sha256:734aa0fd…`), on the 0.14 AndaDB / KIP / Cognitive Nexus
+This checkout tracks KIP `f63848e` and `kip://profiles/cognitive-memory@2.0.0`
+(content digest `sha256:6639aa46…`), on the 0.14 AndaDB / KIP / Cognitive Nexus
 stack and `anda_engine` 0.17. `Cargo.lock` records the resolved versions.
 
 ## Contents
@@ -841,7 +841,7 @@ HTTP or MCP endpoint for prompts and no process-global override.
 Each `assets/Brain{Formation,Recall,Maintenance}.md` has two halves. Everything above
 `# A.` is the KIP 2.0 reference policy vendored from `anda_kip`; `# A.` and below is
 this deployment's contract. The system prompt of every model call assembles the full
-`anda_kip` syntax (about 40 KiB), the Cognitive Memory Profile, the role cards and
+`anda_kip` syntax, the standard vocabulary card, the Cognitive Memory Profile, the role cards and
 that prompt. Budgeted Recall counts the whole system prompt toward its input budget
 and reports `recall_context_budget_exhausted` rather than dropping the syntax.
 
@@ -854,9 +854,11 @@ Do not hand-edit the reference halves or `assets/kip-reference/`; edit section A
 hand and regenerate the rest from the repository root:
 
 ```bash
+export ANDA_KIP_SOURCE=../anda-db/rs/anda_kip  # must match Cargo.lock
 node scripts/sync-kip-assets.mjs
+node scripts/sync-kip-reference.mjs --worker
 pnpm --filter @ldclabs/anda-brain-worker run codegen:prompts
-node scripts/sync-kip-reference.mjs --check
+node scripts/sync-kip-reference.mjs --worker --check
 ```
 
 `sync-kip-assets.mjs` re-copies the reference halves of the Rust and Worker prompts

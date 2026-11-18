@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/ldclabs/anda-brain/anda-cli/api"
 	"github.com/spf13/cobra"
@@ -44,10 +45,51 @@ func loadMemorySession(path, space string) (*memorySession, error) {
 	if session.SpaceID != space {
 		return nil, fmt.Errorf("session %q belongs to space %q, not %q", path, session.SpaceID, space)
 	}
-	if session.Outstanding == nil {
-		session.Outstanding = []string{}
+	if space == "" || utf8.RuneCountInString(space) > 512 || len(session.Outstanding) > api.MaxAfter {
+		return nil, fmt.Errorf("invalid space or receipt count in session %q", path)
+	}
+	session.Outstanding, err = mergeMemoryRefs("outstanding receipts", session.Outstanding)
+	if err != nil {
+		return nil, fmt.Errorf("session %q: %w", path, err)
+	}
+	if session.AttentionCursor != "" && !validMemoryRef(session.AttentionCursor) {
+		return nil, fmt.Errorf("invalid attention cursor in session %q", path)
+	}
+	if scope := session.Scope; scope != nil {
+		if scope.TaskRef != "" && !validMemoryRef(scope.TaskRef) {
+			return nil, fmt.Errorf("invalid task reference in session %q", path)
+		}
+		// A saved scope's order participates in the CLI's existing retry key.
+		scope.ContextRefs, err = mergeMemoryRefs("context references", scope.ContextRefs)
+		if err != nil {
+			return nil, fmt.Errorf("session %q: %w", path, err)
+		}
 	}
 	return &session, nil
+}
+
+func validMemoryRef(ref string) bool {
+	return ref != "" && utf8.RuneCountInString(ref) <= 1024
+}
+
+// Keep the first occurrence so repeated handles occupy one slot and retain their order.
+func mergeMemoryRefs(name string, groups ...[]string) ([]string, error) {
+	merged := []string{}
+	for _, refs := range groups {
+		for _, ref := range refs {
+			if !validMemoryRef(ref) {
+				return nil, fmt.Errorf("%s must contain references of 1 to 1024 characters", name)
+			}
+			if slices.Contains(merged, ref) {
+				continue
+			}
+			if len(merged) == api.MaxAfter {
+				return nil, fmt.Errorf("at most %d distinct %s", api.MaxAfter, name)
+			}
+			merged = append(merged, ref)
+		}
+	}
+	return merged, nil
 }
 
 func (s *memorySession) save(path string) error {
@@ -72,7 +114,13 @@ func (s *memorySession) save(path string) error {
 
 // recordReceipt keeps a receipt as a barrier until a recall accounts for it.
 func (s *memorySession) recordReceipt(receipt *api.MemoryReceipt) error {
-	if s == nil || receipt == nil || slices.Contains(s.Outstanding, receipt.ReceiptRef) {
+	if s == nil || receipt == nil {
+		return nil
+	}
+	if receipt.SpaceID != s.SpaceID || !validMemoryRef(receipt.ReceiptRef) {
+		return fmt.Errorf("receipt has an invalid reference or belongs to a different space")
+	}
+	if slices.Contains(s.Outstanding, receipt.ReceiptRef) {
 		return nil
 	}
 	if len(s.Outstanding) >= api.MaxAfter {
@@ -155,6 +203,26 @@ func sendMemory(cmd *cobra.Command, operation string, input map[string]any, keye
 		return err
 	}
 	scope := memoryScopeFlags(cmd, session)
+	if operation == "recall" {
+		requested, _ := cmd.Flags().GetStringArray("after")
+		var outstanding []string
+		if session != nil {
+			outstanding = session.Outstanding
+			mode, _ := input["mode"].(string)
+			if input["attention_cursor"] == nil && session.AttentionCursor != "" && (mode == "attention" || mode == "resume") {
+				input["attention_cursor"] = session.AttentionCursor
+			}
+		}
+		after, err := mergeMemoryRefs("after receipts", requested, outstanding)
+		if err != nil {
+			return err
+		}
+		if len(after) > 0 {
+			input["after"] = after
+		}
+	} else if session != nil && len(session.Outstanding) >= api.MaxAfter {
+		return fmt.Errorf("recall the session's %d outstanding receipts before submitting another mutation", api.MaxAfter)
+	}
 	raw, err := json.Marshal(input)
 	if err != nil {
 		return err
@@ -178,9 +246,7 @@ func sendMemory(cmd *cobra.Command, operation string, input map[string]any, keye
 		return err
 	}
 	if response.Receipt != nil && response.Status != "failed" {
-		if err := session.recordReceipt(response.Receipt); err != nil {
-			return err
-		}
+		err = session.recordReceipt(response.Receipt)
 	}
 	if operation == "recall" && response.Status != "failed" && len(response.Result) > 0 {
 		var briefing api.MemoryBriefing
@@ -191,11 +257,14 @@ func sendMemory(cmd *cobra.Command, operation string, input map[string]any, keye
 	if session != nil && response.Status != "failed" {
 		session.Scope = scope
 	}
-	if err := session.save(sessionPath); err != nil {
-		return err
+	if err == nil {
+		err = session.save(sessionPath)
 	}
-	if err := printJSON(cmd, response); err != nil {
-		return err
+	if printErr := printJSON(cmd, response); printErr != nil {
+		return printErr
+	}
+	if err != nil {
+		return fmt.Errorf("updating memory session: %w", err)
 	}
 	if response.Error != nil {
 		return response.Error
@@ -213,6 +282,14 @@ var memorySourcesStageCmd = &cobra.Command{
 	Short: "Stage observed messages (--text, --file or stdin) and print their source_ref",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		stream, _ := cmd.Flags().GetString("stream")
+		event, _ := cmd.Flags().GetString("event")
+		if stream == "" && (cmd.Flags().Changed("event") || cmd.Flags().Changed("ordinal") || cmd.Flags().Changed("after")) {
+			return fmt.Errorf("--event, --ordinal and --after require --stream")
+		}
+		if stream != "" && event == "" {
+			return fmt.Errorf("--event is required with --stream")
+		}
 		raw, err := readInput(cmd, "text", "file")
 		if err != nil {
 			return err
@@ -224,13 +301,9 @@ var memorySourcesStageCmd = &cobra.Command{
 		input := &api.StageSourceInput{Messages: messages}
 		input.ObservedAt, _ = cmd.Flags().GetString("observed-at")
 		input.Kind, _ = cmd.Flags().GetString("kind")
-		if stream, _ := cmd.Flags().GetString("stream"); stream != "" {
-			event, _ := cmd.Flags().GetString("event")
+		if stream != "" {
 			ordinal, _ := cmd.Flags().GetUint64("ordinal")
 			after, _ := cmd.Flags().GetStringArray("after")
-			if event == "" {
-				return fmt.Errorf("--event is required with --stream")
-			}
 			input.Order = &api.SourceOrder{StreamRef: stream, EventRef: event, Ordinal: ordinal, PredecessorReceipts: after}
 		}
 		input.IdempotencyKey, _ = cmd.Flags().GetString("key")
@@ -321,11 +394,6 @@ var memoryRecallCmd = &cobra.Command{
 	Short: "Memory Interface recall: answer, action, resume or attention",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		sessionPath, _ := cmd.Flags().GetString("session")
-		session, err := loadMemorySession(sessionPath, spaceID)
-		if err != nil {
-			return err
-		}
 		input := map[string]any{}
 		if len(args) == 1 && strings.TrimSpace(args[0]) != "" {
 			input["query"] = args[0]
@@ -333,20 +401,6 @@ var memoryRecallCmd = &cobra.Command{
 		mode, _ := cmd.Flags().GetString("mode")
 		if mode != "" {
 			input["mode"] = mode
-		}
-		after, _ := cmd.Flags().GetStringArray("after")
-		if session != nil {
-			for _, receipt := range session.Outstanding {
-				if !slices.Contains(after, receipt) {
-					after = append(after, receipt)
-				}
-			}
-		}
-		if len(after) > api.MaxAfter {
-			return fmt.Errorf("at most %d after receipts", api.MaxAfter)
-		}
-		if len(after) > 0 {
-			input["after"] = after
 		}
 		if target, _ := cmd.Flags().GetString("target"); target != "" {
 			input["target_ref"] = target
@@ -358,9 +412,6 @@ var memoryRecallCmd = &cobra.Command{
 			input["context"] = context
 		}
 		cursor, _ := cmd.Flags().GetString("attention-cursor")
-		if cursor == "" && session != nil && (mode == "attention" || mode == "resume") {
-			cursor = session.AttentionCursor
-		}
 		if cursor != "" {
 			input["attention_cursor"] = cursor
 		}

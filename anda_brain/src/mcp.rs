@@ -820,10 +820,10 @@ impl AndaBrainMcpServer {
         access: &McpAccess,
         input: MemoryInterfaceInput,
     ) -> Result<CallToolResult, ErrorData> {
-        use anda_kip::memory::binding::{Operation, Request as MemoryRequest};
-        let request: MemoryRequest =
+        use anda_kip::memory::binding::Operation;
+        let incoming: crate::memory_interface::IncomingRequest =
             serde_json::from_value(input.request).map_err(invalid_params)?;
-        let recall = request.operation == Operation::Recall;
+        let recall = incoming.request.operation == Operation::Recall;
         let scope = if recall {
             TokenScope::Read
         } else {
@@ -833,6 +833,10 @@ impl AndaBrainMcpServer {
         if recall && let Some(reason) = caller.recall_forbidden() {
             return Err(authz_error_data(AuthzError::Forbidden(reason)));
         }
+        let request = match incoming.resolve() {
+            Ok(request) => request,
+            Err(response) => return structured_result(response),
+        };
         let _permit = if recall {
             Some(self.acquire_llm_permit()?)
         } else {

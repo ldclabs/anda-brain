@@ -18,8 +18,9 @@ business agents never have to write KIP.
 - **Recall** answers natural-language questions from that memory.
 - **Maintenance** consolidates, reviews and retires memory while the agent is idle.
 
-Current release: **0.13.4**, tracking KIP `11a82ec` and the Cognitive Memory Profile
-`kip://profiles/cognitive-memory@2.0.0`. See the [CHANGELOG](./CHANGELOG.md).
+This checkout tracks KIP `f63848e` and the Cognitive Memory Profile
+`kip://profiles/cognitive-memory@2.0.0` (content digest `sha256:6639aa46…`).
+Published releases are listed in the [changelog](./CHANGELOG.md).
 
 ---
 

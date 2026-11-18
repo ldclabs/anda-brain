@@ -15,7 +15,7 @@ the 0.13 engine that wrote the Space (read side) and the 0.14 engine it is rebui
 
 1. **Export (0.13).** Every element of the Space in any storage state — Concepts,
    Propositions, Evidence, Assertions, Activities — as one selective Capsule in id order,
-   plus what a Capsule import does not carry: each Concept's Space-local key, each
+   plus the values to restore after import: each Concept's Space-local key and canonical ID, each
    element's storage state and the Space's self Concept.
 2. **Transform.** References to `cognitive-memory@2.1.0/…` (types, predicates, structural
    and facet members) move to `@2.0.0`. The draft `Preference` type does not exist in the
@@ -33,9 +33,12 @@ the 0.13 engine that wrote the Space (read side) and the 0.14 engine it is rebui
    referentially closed chunks that fit one transaction. Assertions, their Evidence
    and Activities referencing them travel together; non-reusable records are imported
    once. Reference closure and size are checked before any collection is dropped;
-   an oversized connected closure is refused without rebuilding the database. Ids are preserved, keys and archived
-   states are restored, and the self Concept is designated again.
-4. **Verify.** A census of every kind, storage state and type is compared with the export.
+   an oversized connected closure, an unsupported storage state or a database containing
+   additional Nexus Spaces stops the rebuild before collection deletion.
+   The report records any remapped element IDs. The tool restores keys, canonical IDs
+   and archived states and designates the self Concept again.
+4. **Verify.** The tool compares counts for every kind, storage state and type in both
+   directions. A difference produces a nonzero exit after writing `census.json`.
 
 Assertion attribution, `asserted_at`, validity, mode, confidence, stance, lifecycle and
 Evidence are carried as recorded; nothing is invented. Element version history, engine
@@ -58,7 +61,9 @@ cargo run --release -- --db /tmp/anda-db-migrating --work /tmp/migrate-work --ty
 ```
 
 `--space` names the Space database (default `anda_bot`). The export is kept in
-`--work/export.json` and reused by later runs; always rebuild from a fresh copy. The run
+`--work/export.json`. Before rebuilding from that export, the tool checks the
+database name, Space creation time and snapshot sequence. For an export made by an older tool, use a fresh `--work`
+directory and reuse your existing `--types` file. Always rebuild from a fresh database copy. The run
 writes `report.json` (dropped and kept collections, packages, defined types, id changes,
 lineage Activities, restored keys and states, warnings) and `census.json`. Swap the migrated
 directory in only after checking them, and start the host on the new stack.

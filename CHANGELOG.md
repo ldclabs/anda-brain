@@ -4,6 +4,16 @@ All notable changes to the Anda Brain project.
 
 ## [Unreleased]
 
+### Dependencies
+
+- The Rust service uses KIP and Cognitive Nexus 0.14.6, tracking KIP `f63848e`
+  and the `cognitive-memory@2.0.0` revision with content digest `sha256:6639aa46…`.
+  Formation, Recall and Maintenance load the upstream standard vocabulary card.
+  Both reference tools expose it as `document="vocabulary"`. The Worker uses
+  `@ldclabs/kip-do` 0.14.6 and `@ldclabs/kip-lang` 2.4.3. Restart any KIP
+  query pagination opened under the previous Worker engine. `CHANGES` can
+  continue from its saved sequence.
+
 ### Fixed
 
 - Budgeted Recall delivers what memory holds about the Concepts it finds. The host's
@@ -16,6 +26,17 @@ All notable changes to the Anda Brain project.
   where the engine excluded the Assertion, the reason. The Brain's own SleepTasks are
   no longer question-search candidates: a queued review of a draft symbol repeats the
   question's words and is not memory about it.
+- HTTP and MCP return `UnsupportedCapability` for an unknown Memory Interface
+  level after caller admission. The Worker uses its engine's compiled request schema
+  to check receipt lists, time selectors, Unicode string lengths and fields.
+  Rust batch diagnostics retain the error when a later KIP operation fails.
+  The Go CLI checks that each operation in a successful batch returned a
+  confirmed result, including `no_effect`.
+- CLI recall merges explicit and saved receipts once. A full session stops a new
+  mutation before submission. A local session-file error still prints the server's receipt.
+- The standalone draft-Space migration checks its source snapshot before rebuilding,
+  preserves Concept canonical IDs and returns a failure if the rebuilt counts differ.
+  It computes import chunks once and copies records only into the chunks that need them.
 
 ## [0.13.6] — 2026-10-17
 

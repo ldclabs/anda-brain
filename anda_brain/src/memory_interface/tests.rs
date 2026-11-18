@@ -12,6 +12,29 @@ use anda_kip::memory::binding::{Briefing, ChannelState, Phase};
 use object_store::memory::InMemory;
 use std::collections::VecDeque;
 
+#[test]
+fn wire_bundle_names_survive_admission_in_json_and_cbor() {
+    let mut raw = json!({"kip_memory":"2.0","request_id":"request-1","operation":"recall",
+        "input":{"mode":"attention"},"requires":["memory_basic","future_bundle"]});
+    let cbor = cbor2::to_vec(&raw).unwrap();
+    for incoming in [
+        serde_json::from_value::<IncomingRequest>(raw.clone()).unwrap(),
+        cbor2::from_slice::<IncomingRequest>(&cbor).unwrap(),
+    ] {
+        let failed = incoming.resolve().unwrap_err();
+        assert_eq!(failed.request_id.as_deref(), Some("request-1"));
+        assert_eq!(failed.error.unwrap().code, "UnsupportedCapability");
+    }
+    raw["requires"] = json!(["memory_experience"]);
+    let request = serde_json::from_value::<IncomingRequest>(raw.clone())
+        .unwrap()
+        .resolve()
+        .unwrap();
+    assert_eq!(request.requires, vec![Bundle::MemoryExperience]);
+    raw["typo"] = json!(true);
+    assert!(serde_json::from_value::<IncomingRequest>(raw).is_err());
+}
+
 #[derive(Debug)]
 enum Step {
     Kip(Json),

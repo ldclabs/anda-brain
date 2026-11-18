@@ -91,7 +91,9 @@ async fn main() -> Result<(), BoxError> {
     let mut before = census_of(&exported, &types);
     let report = rebuild::rebuild(&args.db, &args.space, &exported, &types).await?;
     // The lineage the draft kept in `derived_from` is now its Activity.
-    *before.entry("X active extraction".into()).or_default() += report.lineage_activities.len();
+    if !report.lineage_activities.is_empty() {
+        *before.entry("X active extraction".into()).or_default() += report.lineage_activities.len();
+    }
     std::fs::write(
         args.work.join("report.json"),
         serde_json::to_vec_pretty(&report)?,
@@ -99,12 +101,11 @@ async fn main() -> Result<(), BoxError> {
     let after = rebuild::census(&args.db, &args.space).await?;
     std::fs::write(
         args.work.join("census.json"),
-        serde_json::to_vec_pretty(&serde_json::json!({"expected": before, "rebuilt": after}))?,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "expected": before, "rebuilt": after.counts,
+            "environment": after.environment, "installed_packages": after.packages,
+        }))?,
     )?;
-    let mismatched: Vec<_> = before
-        .iter()
-        .filter(|(label, count)| after.get(*label) != Some(count))
-        .collect();
     println!(
         "rebuilt: {} packages, {} types defined, {} keys and {} archived states restored, {} id changes, {} warnings",
         report.packages.len(),
@@ -114,11 +115,14 @@ async fn main() -> Result<(), BoxError> {
         report.id_changes.len(),
         report.warnings.len()
     );
-    if mismatched.is_empty() {
-        println!("census: every kind, state and type count matches the export");
-    } else {
-        println!("census mismatches: {mismatched:?}");
+    if before != after.counts {
+        return Err(format!(
+            "element counts differ; see {}",
+            args.work.join("census.json").display()
+        )
+        .into());
     }
+    println!("census: every kind, state and type count matches the export");
     Ok(())
 }
 

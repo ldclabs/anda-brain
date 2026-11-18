@@ -3,7 +3,7 @@
 **[English](API.md) | [中文](API_cn.md)**
 
 This document specifies the HTTP and MCP interfaces of the Rust `anda_brain` service
-(0.13.4, KIP `11a82ec` / `kip://profiles/cognitive-memory@2.0.0`). For an overview,
+(KIP `f63848e` / `kip://profiles/cognitive-memory@2.0.0`). For an overview,
 configuration and deployment, see the [technical reference](README.md); for
 agent-facing usage, [SKILL.md](SKILL.md); for runtime setup and recovery,
 [RUNTIME.md](RUNTIME.md). The Cloudflare Worker is a separate implementation with a

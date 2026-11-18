@@ -138,8 +138,13 @@ func (c *Client) MemoryPlan(ctx context.Context, planRef string) (*RpcResponse[j
 // Interface Response itself, not an RPC envelope; a failed intent is a
 // response with status "failed" and an error, not a Go error.
 func (c *Client) Memory(ctx context.Context, request *MemoryRequest) (*MemoryResponse, error) {
+	if request == nil {
+		return nil, fmt.Errorf("missing Memory Interface request")
+	}
 	if request.KipMemory == "" {
-		request.KipMemory = MemoryInterfaceVersion
+		withVersion := *request
+		withVersion.KipMemory = MemoryInterfaceVersion
+		request = &withVersion
 	}
 	data, err := c.doJSON(ctx, http.MethodPost, c.spacePath("/memory"), request)
 	if err != nil {

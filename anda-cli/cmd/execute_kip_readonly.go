@@ -67,10 +67,12 @@ Example:
 		}
 
 		resp, err := newClient().ExecuteKIPReadonly(cmd.Context(), &input)
-		if err != nil {
-			return err
+		if resp != nil {
+			if printErr := printJSON(cmd, resp); printErr != nil {
+				return printErr
+			}
 		}
-		if err := printJSON(cmd, resp); err != nil {
+		if err != nil {
 			return err
 		}
 		return resp.Failure()

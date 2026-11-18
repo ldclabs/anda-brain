@@ -15,8 +15,8 @@
 
 ## KIP 2.0 更新
 
-本 Worker 对齐 KIP `11a82ec` 与 `kip://profiles/cognitive-memory@2.0.0`（修订
-`sha256:734aa0fd…`，只能靠摘要区分修订），使用 `@ldclabs/kip-do` 0.14。用 2.1.0 草案
+本 Worker 的参考资料对齐 KIP `f63848e`，SQLite 引擎使用 `@ldclabs/kip-do` 0.14.6。
+两端采用的 `kip://profiles/cognitive-memory@2.0.0` 内容摘要均为 `sha256:6639aa46…`。用 2.1.0 草案
 激活过的 Space 不做迁移。世界变化记为一条新 Assertion，由时序继承结束旧值；主张的
 `at` 取所引用消息的观察时间；选项按类别定型，Profile 没有 `Preference` 类型；衰减在
 读取时计算；新增 `GET /v1/{space}/memory/attention` 注意力召回。Skill 行为保存为不可变的
@@ -25,6 +25,9 @@
 试验和可重放评估时，程序候选保持未验证，`skills.unsupported_reason` 明确报告该边界。现有
 Brain API 保持可用。两个适配器现在还在 `memory_basic` 级别提供 KIP Memory Interface
 （见下文「Memory Interface」），不声明 `memory_experience` 与 `memory_learning`。
+
+升级到 0.14.6 后，请从第一页重新开始升级前已打开的 KIP 查询分页。
+`CHANGES` 仍可从保存的序列位置继续。
 
 ## KIP 2.0 意味着什么
 
@@ -250,12 +253,14 @@ Formation、Maintenance、Recall 规划及回答阶段均支持查阅。查阅�
 digest 或运行时动作。最终结果省略 `references` 或使用 `[]`，才会进入原有校验及执行流程。
 查阅不会读取图谱、更新快照、扩展权限，也不构成记忆证据或变更覆盖。
 
-`@ldclabs/kip-do` 使用 npm 上的 0.14；协议参考跟随根目录 `Cargo.lock` 解析出的 `anda_kip`（0.14.2），codegen 会校验两者一致。
+`@ldclabs/kip-do` 的版本由 `pnpm-lock.yaml` 锁定。协议参考和标准词汇卡跟随根目录 `Cargo.lock` 解析出的 `anda_kip`，codegen 会校验参考包版本。
 生成检查验证协议 pin、各参考文件 SHA-256 与生成文件；引擎补丁版本不改变协议资料来源。
 从仓库根目录刷新资源：
 
 ```bash
-ANDA_KIP_SOURCE=/path/to/anda_kip-0.14.2 node scripts/sync-kip-reference.mjs --worker
+export ANDA_KIP_SOURCE=../anda-db/rs/anda_kip  # 版本须与 Cargo.lock 一致
+node scripts/sync-kip-assets.mjs
+node scripts/sync-kip-reference.mjs --worker
 pnpm --filter @ldclabs/anda-brain-worker run codegen:prompts
 ```
 

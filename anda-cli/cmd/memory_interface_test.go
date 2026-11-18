@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -125,7 +126,7 @@ func TestMemoryInterfaceSessionKeepsReceiptsUntilARecallAccountsForThem(t *testi
 		t.Fatalf("observe key %v", observe["idempotency_key"])
 	}
 
-	if _, stderr, err := runCLI(t, env, append(base, "memory", "recall", "What do I prefer?", "--mode", "attention", "--session", session)...); err != nil {
+	if _, stderr, err := runCLI(t, env, append(base, "memory", "recall", "What do I prefer?", "--mode", "attention", "--after", "rcpt-observe", "--after", "rcpt-observe", "--session", session)...); err != nil {
 		t.Fatalf("recall: %v %s", err, stderr)
 	}
 	recall := requests.last()
@@ -196,11 +197,70 @@ func TestMemoryKeyIsStableForTheSameLogicalInput(t *testing.T) {
 func TestMemorySessionRefusesOverflow(t *testing.T) {
 	session := &memorySession{SpaceID: "s"}
 	for i := 0; i < api.MaxAfter; i++ {
-		if err := session.recordReceipt(&api.MemoryReceipt{ReceiptRef: "r" + string(rune('a'+i%26)) + string(rune('0'+i/26))}); err != nil {
+		if err := session.recordReceipt(&api.MemoryReceipt{SpaceID: "s", ReceiptRef: "r" + strconv.Itoa(i)}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := session.recordReceipt(&api.MemoryReceipt{ReceiptRef: "overflow"}); err == nil {
+	if err := session.recordReceipt(&api.MemoryReceipt{SpaceID: "s", ReceiptRef: "overflow"}); err == nil {
 		t.Fatal("the 129th outstanding receipt must be refused, never dropped silently")
+	}
+	path := filepath.Join(t.TempDir(), "session.json")
+	if err := session.save(path); err != nil {
+		t.Fatal(err)
+	}
+	var requests requestLog
+	server := memoryServer(t, &requests)
+	defer server.Close()
+	_, _, err := runCLI(t, nil, "--base-url", server.URL, "--space-id", "s", "memory", "observe", "--source", "src-1", "--session", path)
+	if err == nil || requests.count() != 0 {
+		t.Fatalf("full session sent a mutation: err=%v requests=%d", err, requests.count())
+	}
+}
+
+func TestMemorySessionRestoresOnlyValidHandles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.json")
+	session := &memorySession{SpaceID: "s", Outstanding: []string{"r", "r"}, AttentionCursor: strings.Repeat("🌏", 1024)}
+	if err := session.save(path); err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadMemorySession(path, "s")
+	if err != nil || !slices.Equal(got.Outstanding, []string{"r"}) {
+		t.Fatalf("restored session: %v %v", got, err)
+	}
+	if err := got.recordReceipt(&api.MemoryReceipt{SpaceID: "another", ReceiptRef: "foreign"}); err == nil {
+		t.Fatal("accepted a receipt for another space")
+	}
+	session.Scope = &api.MemoryScope{ContextRefs: []string{""}}
+	if err := session.save(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadMemorySession(path, "s"); err == nil {
+		t.Fatal("accepted an invalid saved scope")
+	}
+}
+
+func TestMemorySessionSaveFailureStillPrintsAcceptedReceipt(t *testing.T) {
+	var requests requestLog
+	server := memoryServer(t, &requests)
+	defer server.Close()
+	path := filepath.Join(t.TempDir(), "session.json")
+	if err := os.Mkdir(path+".tmp", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := runCLI(t, nil, "--base-url", server.URL, "--space-id", "s", "memory", "observe", "--source", "src-1", "--session", path)
+	if err == nil || requests.count() != 1 || !strings.Contains(out, "rcpt-observe") {
+		t.Fatalf("expected receipt and local save error: %v %s", err, out)
+	}
+}
+
+func TestStageRejectsSourceOrderWithoutStream(t *testing.T) {
+	var requests requestLog
+	server := memoryServer(t, &requests)
+	defer server.Close()
+	for _, flags := range [][]string{{"--event", "e"}, {"--ordinal", "1"}, {"--after", "r1"}} {
+		args := []string{"--base-url", server.URL, "--space-id", "s", "memory", "sources", "stage", "--text", "observation"}
+		if _, _, err := runCLI(t, nil, append(args, flags...)...); err == nil || requests.count() != 0 {
+			t.Fatalf("accepted incomplete source order %v: %v", flags, err)
+		}
 	}
 }

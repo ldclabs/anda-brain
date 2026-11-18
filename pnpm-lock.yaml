@@ -9,8 +9,8 @@ importers:
   anda-brain-worker:
     dependencies:
       '@ldclabs/kip-do':
-        specifier: ^0.14.0
-        version: 0.14.0
+        specifier: ^0.14.6
+        version: 0.14.6
     devDependencies:
       '@cloudflare/vitest-pool-workers':
         specifier: ^0.20.2
@@ -448,12 +448,12 @@ packages:
   '@jridgewell/trace-mapping@0.3.9':
     resolution: {integrity: sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ==}
 
-  '@ldclabs/kip-do@0.14.0':
-    resolution: {integrity: sha512-M9ja+Z46Qz2+Kx6Y79gfD81aiEstW2MGCmSJqTAHJrHcel+2686kbYA5fD0QD3/x1qNn/m/JNFvUru1mEdruPQ==}
+  '@ldclabs/kip-do@0.14.6':
+    resolution: {integrity: sha512-H/Y+J40oBfpA8XA1/uXHc20zjhhhG9l9YXq4W03W3b9CtJnioyAMwYbSTdQSj9NIxv4Y2B0NCYjRPaSGRWR6PQ==}
     engines: {node: '>=20'}
 
-  '@ldclabs/kip-lang@2.4.1':
-    resolution: {integrity: sha512-mHfGQt3qw5Oas+HlMcK6JEV16YuNerbmJAFuVJSCKysL9Yln8kUM/3UXpnRSJwNknaITjdJHj1wR5BoPWFxAfw==}
+  '@ldclabs/kip-lang@2.4.3':
+    resolution: {integrity: sha512-XNzXxqXyKELGxwZUqnIIqxwYH8pkZ75rkFgYHo35yXKJRaMU7QWK0a9MhWmv7CgEAOTgZpuk8EqDJFcZb3/Bzw==}
     engines: {node: '>=18'}
 
   '@oxc-project/types@0.143.0':
@@ -1414,13 +1414,13 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@ldclabs/kip-do@0.14.0':
+  '@ldclabs/kip-do@0.14.6':
     dependencies:
-      '@ldclabs/kip-lang': 2.4.1
+      '@ldclabs/kip-lang': 2.4.3
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
 
-  '@ldclabs/kip-lang@2.4.1': {}
+  '@ldclabs/kip-lang@2.4.3': {}
 
   '@oxc-project/types@0.143.0': {}
 

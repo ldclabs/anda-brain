@@ -99,7 +99,6 @@ Evidence only
 Event
 Experience + ExperienceSteps
 Proposition + Assertion
-Preference artifact
 Insight candidate
 Commitment
 Watch

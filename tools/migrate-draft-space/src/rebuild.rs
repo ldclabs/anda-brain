@@ -272,15 +272,19 @@ fn chunks(capsule: &Json) -> Result<Vec<Vec<Json>>, BoxError> {
     let records = capsule["payload"]["records"]
         .as_array()
         .ok_or("the Capsule has no records")?;
-    let by_id: BTreeMap<String, &Json> = records
+    let by_id: BTreeMap<String, usize> = records
         .iter()
-        .map(|r| {
+        .enumerate()
+        .map(|(index, r)| {
             r["id"]
                 .as_str()
-                .map(|id| (id.to_string(), r))
+                .map(|id| (id.to_string(), index))
                 .ok_or("record has no id")
         })
         .collect::<Result<_, _>>()?;
+    if by_id.len() != records.len() {
+        return Err("the Capsule has duplicate record ids".into());
+    }
     fn references(value: &Json, found: &mut BTreeSet<String>) {
         match value {
             Json::String(id) if id.parse::<anda_cognitive_nexus::ElementId>().is_ok() => {
@@ -302,9 +306,9 @@ fn chunks(capsule: &Json) -> Result<Vec<Vec<Json>>, BoxError> {
         }
     }
     let mut edges = BTreeMap::new();
-    for (id, record) in &by_id {
+    for (id, &index) in &by_id {
         let mut refs = BTreeSet::new();
-        references(record, &mut refs);
+        references(&records[index], &mut refs);
         refs.remove(id);
         for reference in &refs {
             if !by_id.contains_key(reference) {
@@ -315,7 +319,12 @@ fn chunks(capsule: &Json) -> Result<Vec<Vec<Json>>, BoxError> {
     }
     let mut indivisible: BTreeSet<String> = by_id
         .iter()
-        .filter(|(_, r)| r["kind"] != "concept" && r["kind"] != "proposition")
+        .filter(|(_, index)| {
+            !matches!(
+                records[**index]["kind"].as_str(),
+                Some("concept" | "proposition")
+            )
+        })
         .map(|(id, _)| id.clone())
         .collect();
     // A Concept that refers to a non-reusable record must travel with it too.
@@ -364,9 +373,9 @@ fn chunks(capsule: &Json) -> Result<Vec<Vec<Json>>, BoxError> {
         }
         groups.push(group);
     }
-    let close = |roots: &BTreeSet<String>| -> Vec<Json> {
-        let mut included = roots.clone();
+    let close = |roots: BTreeSet<String>| -> BTreeSet<usize> {
         let mut pending: Vec<String> = roots.iter().cloned().collect();
+        let mut included = roots;
         while let Some(id) = pending.pop() {
             for reference in &edges[&id] {
                 if included.insert(reference.clone()) {
@@ -374,32 +383,35 @@ fn chunks(capsule: &Json) -> Result<Vec<Vec<Json>>, BoxError> {
                 }
             }
         }
-        // The original transformed records are already sorted by kind and id.
-        records
-            .iter()
-            .filter(|r| included.contains(r["id"].as_str().unwrap()))
-            .cloned()
-            .collect()
+        included.iter().map(|id| by_id[id]).collect()
     };
-    let fits = |chunk: &[Json]| {
-        chunk.len() <= CHUNK_ELEMENTS && chunk.iter().map(nodes).sum::<usize>() <= CHUNK_NODES
-    };
+    // Positions preserve the original kind/id order. Copy a record only when emitting a chunk.
+    let materialize = |batch: &BTreeSet<usize>| batch.iter().map(|&i| records[i].clone()).collect();
+    let weights: Vec<_> = records.iter().map(nodes).collect();
     let mut out = Vec::new();
-    let mut roots = BTreeSet::new();
+    let mut batch = BTreeSet::new();
+    let mut weight = 0;
     for group in groups {
-        let mut combined = roots.clone();
-        combined.extend(group.clone());
-        if !fits(&close(&combined)) && !roots.is_empty() {
-            out.push(close(&roots));
-            roots.clear();
-        }
-        roots.extend(group);
-        if !fits(&close(&roots)) {
+        let group = close(group);
+        let group_weight = group.iter().map(|&i| weights[i]).sum::<usize>();
+        if group.len() > CHUNK_ELEMENTS || group_weight > CHUNK_NODES {
             return Err("a connected reference closure exceeds one migration transaction; the database was not rebuilt".into());
         }
+        let mut count = batch.len();
+        for i in group.difference(&batch) {
+            count += 1;
+            weight += weights[*i];
+        }
+        if count > CHUNK_ELEMENTS || weight > CHUNK_NODES {
+            out.push(materialize(&batch));
+            batch = group;
+            weight = group_weight;
+        } else {
+            batch.extend(group);
+        }
     }
-    if !roots.is_empty() {
-        out.push(close(&roots));
+    if !batch.is_empty() {
+        out.push(materialize(&batch));
     }
     Ok(out)
 }
@@ -414,7 +426,14 @@ async fn run(nexus: &CognitiveNexus, text: &str, parameters: Json) -> Result<Jso
         .execute(anda_kip::parse_kip(text)?, &request, &request.operations[0])
         .await;
     if response.status != anda_kip::TopLevelStatus::Succeeded {
-        return Err(format!("{text}: {}", serde_json::to_string(&response.error)?).into());
+        if let Some(error) = response
+            .error
+            .as_ref()
+            .or_else(|| response.results.iter().find_map(|r| r.error.as_ref()))
+        {
+            return Err(format!("{text}: {}: {}", error.code, error.message).into());
+        }
+        return Err(format!("{text}: {:?}", response.status).into());
     }
     Ok(response.first_result().cloned().unwrap_or(Json::Null))
 }
@@ -451,15 +470,56 @@ pub async fn rebuild(
     types: &BTreeMap<String, OptionType>,
 ) -> Result<Report, BoxError> {
     let mut report = Report::default();
-    // Resolve the entire reference closure before deleting any collection.
-    // A malformed export or oversized connected group must leave the input intact.
-    let preview = transform(exported, types, &[], &mut Report::default())?;
-    chunks(&preview)?;
-
+    if exported.database != space || exported.space_created_at.is_empty() {
+        return Err("export does not identify this database; export the target copy into a fresh --work directory".into());
+    }
+    let option_ids: BTreeSet<_> = option_concepts(exported)
+        .into_iter()
+        .filter_map(|option| option["id"].as_str())
+        .collect();
+    let mut defined = BTreeMap::new();
+    for (id, option) in types {
+        if !option_ids.contains(id.as_str()) {
+            return Err(format!("{id} is not a draft Preference in this export").into());
+        }
+        let symbol: anda_cognitive_nexus::schema::symbol::SymbolRef =
+            anda_kip::draft_symbol_ref(&option.name).parse()?;
+        if symbol.name != option.name {
+            return Err(format!("invalid option type name for {id}").into());
+        }
+        anda_kip::check_draft_definition(
+            anda_kip::DefineKind::ConceptType,
+            &json!({"description": option.description}),
+        )?;
+        defined
+            .entry(option.name.clone())
+            .or_insert_with(|| option.description.clone());
+    }
+    if let Some(fact) = exported
+        .facts
+        .iter()
+        .find(|fact| !matches!(fact.state.as_str(), "active" | "archived"))
+    {
+        return Err(format!("cannot restore {} in storage state {}", fact.id, fact.state).into());
+    }
     // The generated legacy package is this Space's own artifact: read it from
     // the old Nexus before that Nexus is dropped.
     let db = open(root, space).await?;
     let old = CognitiveNexus::connect(db.clone()).await?;
+    if old.store.spaces().len() != 1 {
+        old.close().await?;
+        return Err("migration requires a database containing only the default Nexus Space".into());
+    }
+    let current = old.store.get_space(DEFAULT_SPACE).await?;
+    if current.created_at != exported.space_created_at
+        || Some(current.seq) != exported.capsule["payload"]["source"]["snapshot_seq"].as_u64()
+    {
+        old.close().await?;
+        return Err(
+            "export and target database are from different snapshots; use a fresh --work directory"
+                .into(),
+        );
+    }
     let legacy: Vec<Arc<SchemaPackage>> = old
         .store
         .installed_packages()
@@ -469,6 +529,20 @@ pub async fn rebuild(
         .map(|(_, package)| package)
         .collect();
     old.close().await?;
+
+    let profile = SchemaPackage::parse(anda_cognitive_nexus::profiles::COGNITIVE_MEMORY)?;
+    let packages: Vec<_> = legacy
+        .iter()
+        .map(Arc::as_ref)
+        .chain([&profile])
+        .map(|p| p.manifest.package_ref.clone())
+        .collect();
+    let mut capsule = transform(exported, types, &packages, &mut report)?;
+    // Validate every chunk before dropping any collection. Keep only the common
+    // envelope as a template once the records are owned by their import chunks.
+    let all = chunks(&capsule)?;
+    capsule["payload"]["records"] = json!([]);
+    capsule["payload"]["manifest"]["roots"] = json!([]);
 
     let db = open(root, space).await?;
     for name in db.metadata().collections {
@@ -488,7 +562,6 @@ pub async fn rebuild(
         report.dropped_collections.len()
     );
     let nexus = CognitiveNexus::connect(db.clone()).await?;
-    let profile = SchemaPackage::parse(anda_cognitive_nexus::profiles::COGNITIVE_MEMORY)?;
     let mut lock = SchemaLock::default();
     for package in legacy.iter().map(|p| p.as_ref()).chain([&profile]) {
         nexus
@@ -505,12 +578,6 @@ pub async fn rebuild(
     nexus.activate_schema(DEFAULT_SPACE, lock).await?;
 
     // Each option kind is a draft-vocabulary symbol (Spec §20.16).
-    let mut defined: BTreeMap<String, String> = BTreeMap::new();
-    for option in types.values() {
-        defined
-            .entry(option.name.clone())
-            .or_insert_with(|| option.description.clone());
-    }
     for (name, description) in &defined {
         run(
             &nexus,
@@ -521,8 +588,6 @@ pub async fn rebuild(
         report.defined_types.push(name.clone());
     }
 
-    let packages = report.packages.clone();
-    let capsule = transform(exported, types, &packages, &mut report)?;
     let symbols: Vec<SymbolMapping> = defined
         .keys()
         .map(|name| SymbolMapping {
@@ -532,7 +597,6 @@ pub async fn rebuild(
         })
         .collect();
     let mut mapping: BTreeMap<String, String> = BTreeMap::new();
-    let all = chunks(&capsule)?;
     let total = all.len();
     for (index, chunk) in all.into_iter().enumerate() {
         let mut kinds: BTreeMap<String, usize> = BTreeMap::new();
@@ -641,7 +705,7 @@ pub async fn rebuild(
             .await?;
             if let Element::Concept(row) = tx.load(id).await? {
                 row.key = fact.key.clone();
-                row.canonical_id.clear();
+                row.canonical_id.clone_from(&fact.canonical_id);
             }
             tx.mark_changed(id, anda_kip::ChangeOp::Update);
             if !fact.key.is_empty() {
@@ -664,11 +728,6 @@ pub async fn rebuild(
                     .warnings
                     .push(format!("state of {}: {error}", fact.id)),
             }
-        } else if fact.state != "active" {
-            report.warnings.push(format!(
-                "{} was {}; imported as active",
-                fact.id, fact.state
-            ));
         }
     }
     if !exported.self_concept.is_empty() {
@@ -684,7 +743,13 @@ pub async fn rebuild(
 }
 
 /// Counts by kind, storage state and type, for the acceptance comparison.
-pub async fn census(root: &Path, space: &str) -> Result<BTreeMap<String, usize>, BoxError> {
+pub struct Census {
+    pub counts: BTreeMap<String, usize>,
+    pub environment: Json,
+    pub packages: Vec<String>,
+}
+
+pub async fn census(root: &Path, space: &str) -> Result<Census, BoxError> {
     let db = open(root, space).await?;
     let nexus = CognitiveNexus::connect(db).await?;
     let mut census = BTreeMap::new();
@@ -710,21 +775,120 @@ pub async fn census(root: &Path, space: &str) -> Result<BTreeMap<String, usize>,
         }
     }
     let environment = run(&nexus, "DESCRIBE SCHEMA ENVIRONMENT", json!({})).await?;
-    census.insert(format!("environment {environment}"), 1);
     let packages: Vec<String> = nexus
         .store
         .installed_packages()
         .await?
         .into_keys()
         .collect();
-    census.insert(format!("installed {packages:?}"), 1);
     nexus.close().await?;
-    Ok(census)
+    Ok(Census {
+        counts: census,
+        environment,
+        packages,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn draft_export_is_bound_to_its_snapshot_and_preserves_canonical_identity() {
+        use kip13::Executor as _;
+        let dir = tempfile::tempdir().unwrap();
+        let name = "migration_roundtrip";
+        let os = object_store::local::LocalFileSystem::new_with_prefix(dir.path()).unwrap();
+        let os = store13::MetaStoreBuilder::new(os, 100000).build();
+        let db = db13::database::AndaDB::connect(
+            Arc::new(os),
+            db13::database::DBConfig {
+                name: name.into(),
+                storage: crate::export::storage_config(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let old = nexus13::CognitiveNexus::connect(Arc::new(db))
+            .await
+            .unwrap();
+        old.install_and_activate(
+            &[("test", nexus13::profiles::COGNITIVE_MEMORY)],
+            DEFAULT_SPACE,
+        )
+        .await
+        .unwrap();
+        let command = r#"MUTATE {
+            CREATE CONCEPT ?c { TYPE "Person" NAME "Alice" SET FIELDS {canonical_id: "urn:test:alice"} }
+            CREATE CONCEPT ?option { TYPE "Preference" NAME "Dark" }
+        }"#;
+        let request = kip13::Request::single(command);
+        let response = old
+            .system_session()
+            .execute(
+                kip13::parse_kip(command).unwrap(),
+                &request,
+                &request.operations[0],
+            )
+            .await;
+        assert_eq!(
+            response.status,
+            kip13::TopLevelStatus::Succeeded,
+            "{response:?}"
+        );
+        old.close().await.unwrap();
+
+        let mut exported = crate::export::export(dir.path(), name).await.unwrap();
+        let mut types = BTreeMap::from([(
+            "C-2".into(),
+            OptionType {
+                name: String::new(),
+                description: "Color scheme".into(),
+            },
+        )]);
+        assert!(rebuild(dir.path(), name, &exported, &types).await.is_err());
+        types.get_mut("C-2").unwrap().name = "ColorScheme".into();
+        let seq = exported.capsule["payload"]["source"]["snapshot_seq"].take();
+        let err = rebuild(dir.path(), name, &exported, &types)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("different snapshots"), "{err}");
+        exported.capsule["payload"]["source"]["snapshot_seq"] = seq;
+        rebuild(dir.path(), name, &exported, &types).await.unwrap();
+        assert_eq!(
+            census(dir.path(), name).await.unwrap().counts,
+            crate::census_of(&exported, &types)
+        );
+        let rebuilt = CognitiveNexus::connect(open(dir.path(), name).await.unwrap())
+            .await
+            .unwrap();
+        let Element::Concept(alice) = rebuilt
+            .store
+            .get_element("C-1".parse().unwrap())
+            .await
+            .unwrap()
+        else {
+            panic!("expected Alice")
+        };
+        assert_eq!(alice.canonical_id, "urn:test:alice");
+        rebuilt
+            .store
+            .open_or_create_space(anda_cognitive_nexus::store::space::SpaceDraft {
+                space_id: "another".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        rebuilt.close().await.unwrap();
+        let err = rebuild(dir.path(), name, &exported, &types)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("only the default Nexus Space"),
+            "{err}"
+        );
+    }
 
     #[test]
     fn chunking_keeps_shared_evidence_and_cross_kind_lineage_together() {
@@ -841,6 +1005,8 @@ mod tests {
         capsule["payload"]["records"] = json!(records);
         capsule["payload"]["external_refs"] = json!([]);
         let exported = Exported {
+            database: "migration_source".into(),
+            space_created_at: String::new(),
             capsule,
             facts: vec![],
             self_concept: String::new(),

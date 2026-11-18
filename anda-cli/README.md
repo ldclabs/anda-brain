@@ -172,8 +172,11 @@ anda-cli --space-id my_space --token $TOKEN memory forget C-7
 # cursor and task/context scope; recall adds outstanding receipts to `after` automatically.
 # A receipt leaves the session once a recall reports it available, or failed: a
 # failed receipt never becomes available, and that recall's briefing explains it.
+# Repeating an --after receipt uses one slot. A session with 128 outstanding
+# receipts needs a recall before another mutation can be submitted with that session.
 # --dry-run is refused with --mode: the Memory Interface has no erasure preview.
-# Stage from --text, --file or stdin.
+# Stage from --text, --file or stdin. For ordered sources supply --stream
+# and --event together. --ordinal and predecessor --after belong to that stream.
 anda-cli --space-id my_space --token $TOKEN memory sources stage \
   --file chat.json --observed-at 2026-09-02T08:00:00.000Z --key chat-42:msg-7
 anda-cli --space-id my_space --token $TOKEN memory observe --source src-… \

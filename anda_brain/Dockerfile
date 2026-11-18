@@ -12,9 +12,10 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-COPY . .
+COPY Cargo.toml Cargo.lock ./
+COPY anda_brain/ ./anda_brain/
 
-RUN cargo build --release -p anda_brain --features mcp,wiki
+RUN cargo build --release --locked -p anda_brain --features mcp,wiki
 
 FROM debian:bookworm-slim AS runtime
 

@@ -126,9 +126,11 @@ WHERE { <patterns and filters> }
 [AS OF SEQ :seq]                                  // cognitive history: what the Brain contained/believed then (a tx id or instant → seq via DESCRIBE TRANSACTION / DESCRIBE SNAPSHOT AT TIME)
 [FOR TIME :world_time]                            // world-valid time: what was applicable then
 [WITH EPISTEMIC { purpose: "...", risk: "low", policy: "...", include_historical: false,
-                  include_hypothetical: false, explanation: "none|summary|ledger" }]
+                  include_hypothetical: false, explanation: "summary" }]
 [ORDER BY <expr> [ASC|DESC], ...] [LIMIT :n] [CURSOR :cursor]   // several sort keys; ASC default; nulls last
 ```
+
+`explanation` accepts exactly `"none"`, `"summary"` or `"ledger"`, including when supplied by a parameter.
 
 `AS OF` and `FOR TIME` are independent axes. "What did the Brain believe at cognitive time C?" = `AS OF C`; "what did it then believe about world time W?" = `AS OF C` + `FOR TIME W`; "what does it now believe about W?" = `FOR TIME W` only. Projections are variables, dot paths or aggregates; mixing plain expressions with aggregates groups by the plain ones.
 
@@ -543,7 +545,7 @@ safe_same_request | requires_refresh | requires_different_input | requires_autho
 | requires_new_snapshot | requires_reacquire_artifact | outcome_lookup_required | non_retryable
 ```
 
-Frequent codes → fix: `SchemaSymbolAmbiguous` (use exact `kip://pkg@ver/symbol`) · `SchemaSymbolNotFound` (DESCRIBE first; if the relation truly is missing, `DEFINE` it) · `SchemaSymbolConflict` (that name already exists — use it) · `EpistemicRevisionRequired` (you tried to UPDATE belief history → new Assertion + SUPERSEDING) · `EvidenceCorrectionRequired` (→ CORRECT ... BY) · `VersionConflict` (re-read, re-apply, retry with fresh EXPECT VERSION) · `IdempotencyConflict` (same key, different request — pick a new key) · `OutcomeUnknown` (→ lookup by idempotency key) · `NotFoundOrNotVisible` (may exist beyond your visibility — never conclude falsehood) · `ReadonlyViolation` / `LanguageMismatch` (actual parsed semantics rule).
+Frequent codes → fix: `SchemaSymbolAmbiguous` (use exact `kip://pkg@ver/symbol`) · `SchemaSymbolNotFound` (DESCRIBE first; if the relation truly is missing, `DEFINE` it) · `SchemaSymbolConflict` (that name already exists — use it) · `EpistemicRevisionRequired` (you tried to UPDATE belief history → new Assertion + SUPERSEDING) · `EvidenceCorrectionRequired` (→ TRANSITION :old TO "corrected" BY :new) · `VersionConflict` (re-read, re-apply, retry with fresh EXPECT VERSION) · `IdempotencyConflict` (same key, different request — pick a new key) · `OutcomeUnknown` (→ lookup by idempotency key) · `NotFoundOrNotVisible` (may exist beyond your visibility — never conclude falsehood) · `ReadonlyViolation` / `LanguageMismatch` (actual parsed semantics rule).
 
 ---
 

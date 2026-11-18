@@ -26,7 +26,7 @@ The following artifacts are normative companions to this Specification:
 - `KIP-2.0-Memory-Interface.md`, `schemas/kip-memory.schema.json` and `profiles/memory-bundles.json` — the optional Agent-to-Brain binding and its levels
 - `KIP-2.0-Capsule-Specification.md` — §37–§41 and §95 of this Specification, carried in a companion under the same numbering
 - `KIP-2.0-Optional-Profiles-and-Migration.md` — §100, §101, §103 and Appendix I: historical reads, high-assurance hardening and KIP 1.x migration, each a capability (§67.4)
-- `brain/KIP-2.0-Validated-Learning.md` — Skill trials, evaluations and validated standing (capability bundle `memory_learning`)
+- `brain/KIP-2.0-Validated-Learning.md` — Skill trials, evaluations and validated standing (Memory Interface level `memory_learning`)
 - `brain/KIP-2.0-Brain-Runtime.md` — durable attention, leases, dispatch and receiver fencing (capability `durable_brain_runtime`)
 - `KIP-2.0-Invariants.md` — the invariant registry: §102's Core invariants (Part A) and the Profile's (Part B)
 - `conformance/` — the engine suite, vectors, fixtures, reference models and their schemas (`conformance/README.md`)
@@ -732,7 +732,7 @@ A Proposition subject MUST NOT be a Literal.
 
 A Literal is written as a primitive JSON scalar — a string, a number, a boolean, or `null` (§9.5) — and its `datatype` is the JSON type it was written in:
 
-```json
+```text
 "+08:00"
 42
 true
@@ -2193,7 +2193,11 @@ The structural baseline (§21.10) resolves no conflict: two eligible, materially
 
 The rules apply in order: the first rule under which one candidate prevails over every other candidate of the conflict set decides it. A candidate that prevails receives its candidate status as its final status; each candidate it prevails over becomes `uncertain` with the uncertainty reason `outranked` and a ledger entry naming the rule, never `rejected`, because no opposition was asserted. When no candidate prevails over all others — under rule 3, when the greatest start keys tie — the conflict stands and every candidate in it remains `contested`. The policy uses no numbers: `score` is `null`, and two runtimes given the same visible state produce the same status, `leading` and ledger.
 
-Rule 3 is the cross-actor counterpart of temporal succession: succession lets an actor's later value end that actor's earlier one, and recency lets the value most recently claimed to hold prevail when different actors' values conflict — a device's old observation against the person's newer statement, or two instruments' readings. It compares when values were claimed to hold, never when the Brain wrote them (§13.2), so a late-recorded old claim never wins by being recorded last. Rules 1 and 2 come first, so a person's own statement still prevails over newer hearsay and a task instruction over a newer general one.
+Rule 3 is the cross-actor counterpart of temporal succession: succession lets an actor's later value end that actor's earlier one, and recency lets the value most recently claimed to hold prevail when different actors' values conflict — a device's old observation against the person's newer statement, or two instruments' readings. It compares when values were claimed to hold, never when the Brain wrote them (§13.2), so a late-recorded old claim never wins by being recorded last. Rules 1 and 2 come first, so a person's own statement still prevails over newer hearsay and a task instruction over a newer general one:
+
+- Because succession lines are partitioned by `(actor, context_refs)` (§25.4), a newer global claim (`context_refs: []`) does not end an active context-specific claim. Rule 1 gives a scoped candidate precedence only when it prevails over every other candidate in the conflict set. If scoped rivals have incomparable context sets and no candidate wins Rule 1, later rules can select a general candidate; that changes final belief without ending the scoped claims. Revising or lifting a scoped claim itself requires a new Assertion or retraction in that same `context_refs` scope.
+- Rule 2 protects first-person testimony against third-party `stated` or `inferred` hearsay, while stepping aside when the rival has `mode: "observed"` so that a newer observation can prevail under Rule 3. Where a third-party institutional or environmental report should outweigh an older self-report without direct observation, a deployment models the relation from the authoritative subject or uses a versioned `weighted_projection` policy.
+- An `inferred` Assertion without a written `from` does not narrow earlier intervals by temporal succession (§25.4), and when outranked under Rule 3 becomes `uncertain` (`outranked`) rather than `insufficient`, so no world-time change boundary is invented. Formation workflows that derive an `inferred` claim from dated sources SHOULD set `from` (or a `from` bound) from those sources rather than relying on the inference run's `asserted_at`.
 
 The rules are deliberately few. Mode ranking beyond rule 2 and trust are policy choices a deployment makes through its own versioned policy (`weighted_projection`). The machine-readable policy artifact is `profiles/policy-memory-default.json`. A Memory Interface binding (companion) uses `kip:memory-default` unless the request or the deployment names another policy, and discloses the policy in every basis.
 
@@ -3755,7 +3759,7 @@ Rules:
 - The pattern binds `?var` to each hit, an element of the named kind (§66.2), and exposes the transient virtual members `?var.retrieval.score` and `?var.retrieval.mode` (§66.4). They MAY be used in `FILTER` and `ORDER BY`; they MUST NOT be written, persisted or read as confidence (§2.10).
 - `LIMIT <k>` is REQUIRED and bounds the candidate set: the pattern yields at most the `k` highest-ranked visible hits after Governance filtering and `THRESHOLD`. Pagination belongs to the enclosing `FIND` (§44.8); the pattern takes no `CURSOR`.
 - Retrieval runs against the query's snapshot. Under `AS OF SEQ` it is historical search and requires `historical_search` (§66.1). Modes, modifiers, freshness and existence protection follow §66.1–§66.5 exactly.
-- A Search Pattern MUST NOT appear inside `NOT`: a search miss never proves absence (§66.6). It MAY appear inside `OPTIONAL` and `UNION`.
+- A Search Pattern is a KQL `FIND` `WHERE` clause only. It MUST NOT appear inside `NOT` (a search miss never proves absence, §66.6), in a KML mutation's `WHERE` block (§51.2), or in `EXPORT CAPSULE ... WHERE` (§68.2): approximate retrieval never selects targets for mutation or capsule export. It MAY appear inside `OPTIONAL` and `UNION` within `FIND`.
 - A result that used a Search Pattern is approximate in the sense of §66.6: it is complete for its declared bound, never semantically exhaustive.
 
 ---
@@ -4204,7 +4208,8 @@ WITH EPISTEMIC {
 
 ## 49.1 Explanation levels
 
-Recommended:
+When supplied, `explanation` MUST resolve to one of these case-sensitive string values.
+The same requirement applies to the value of a bound parameter.
 
 ```text
 none
@@ -4669,7 +4674,7 @@ CREATE ASSERTION ?a {
   CLIENT KEY :a_key
 
   SET FIELDS {
-    proposition: ?p,
+    proposition: :proposition,
     asserted_by: :alice,
     stance: "support",
     mode: "stated",
@@ -4678,7 +4683,7 @@ CREATE ASSERTION ?a {
   }
 
   SET STRUCTURAL {
-    ("evidence", ?e) {role: "support"}
+    ("evidence", :evidence) {role: "support"}
   }
 }
 ```
@@ -4700,7 +4705,7 @@ CREATE ACTIVITY ?act {
 
   SET STRUCTURAL {
     ("inputs", :input)
-    ("outputs", ?a)
+    ("outputs", :assertion)
   }
 }
 ```
@@ -4754,7 +4759,7 @@ Retraction preserves historical payload. The move is legal only from `active`; f
 ## 57.4 Supersession
 
 ```prolog
-TRANSITION :old TO "superseded" BY ?new
+TRANSITION :old TO "superseded" BY :new
 ```
 
 Supersession MUST NOT be used merely because another actor disagrees, and it MUST NOT be used to record that the world changed: that is one new Assertion from the time of the change, which ends its predecessor through temporal succession (§14.2, §25.4, F.2).
@@ -5125,7 +5130,7 @@ Payload purge is the data-minimization instrument: a Space can discard observed 
 
 ## 60.7 Semantic erasure
 
-Payload purge is not semantic forgetting. A user-level forgetting operation that must remove what the Brain learned from a source — not only the source bytes — runs an **ErasurePlan** (`schemas/kip-cognitive-records.schema.json`) under `purge` authority. The plan states its scope (`payload_only` or `semantic`), basis and matched source events, and enumerates the retained semantic copies, dependent summaries, replay artifacts, indexes and caches, runtime-held blobs and controlled backup copies in scope, together with holds, unavailable surfaces and prior external exports. A derived copy MAY need redaction or replacement rather than deletion of an unrelated whole record. Every step keeps enough non-content audit to prove what was done where policy allows.
+Payload purge is not semantic forgetting. A user-level forgetting operation that must remove what the Brain learned from a source — not only the source bytes — runs an **ErasurePlan** (`schemas/kip-cognitive-records.schema.json`) under `purge` authority. The plan states its scope (`payload_only` or `semantic_forgetting`; a Memory Interface `forget` request with `mode: "semantic"` compiles to `scope: "semantic_forgetting"`), basis and matched source events, and enumerates the retained semantic copies, dependent summaries, replay artifacts, indexes and caches, runtime-held blobs and controlled backup copies in scope, together with holds, unavailable surfaces and prior external exports. A derived copy MAY need redaction or replacement rather than deletion of an unrelated whole record. Every step keeps enough non-content audit to prove what was done where policy allows.
 
 The executor revalidates authorization, holds and closure against concurrent writes, checkpoints bounded batches, invalidates materializations and verifies every in-scope controlled surface. Its outcome is `completed`, `partial` or `blocked`, with a coverage manifest and receipts; `completed` is forbidden while any in-scope controlled copy, pending backup erasure or unprocessed dependency remains. Erasure never claims to recall prior external exports (§60.6). Re-ingestion of an erased source event is prevented within the stated retention policy by a non-content source-event tombstone; a new authorized observation is a separate policy decision. A replay whose inputs were erased reports them unavailable and never fabricates a successful recomputation.
 
@@ -5235,7 +5240,7 @@ STRUCTURAL FIELD | COMPATIBILITY | ERROR | TRANSACTION | SNAPSHOT
 CAPSULE | EPISTEMIC POLICY | TRUST | ACCESS
 ```
 
-The resolved execution context (Principal, actor binding, Space, epistemic policy) is part of `DESCRIBE PRIMER` (§65) and, for the Space alone, `DESCRIBE SPACE`; Projection capability is part of `DESCRIBE CAPABILITIES` (§67). Neither has a statement of its own.
+The resolved execution context (Principal, actor binding, Space, epistemic policy) is part of `DESCRIBE PRIMER` (§64) and, for the Space alone, `DESCRIBE SPACE`; Projection capability is part of `DESCRIBE CAPABILITIES` (§67). Neither has a statement of its own.
 
 `LIST` targets:
 

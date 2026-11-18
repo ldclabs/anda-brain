@@ -49,6 +49,32 @@ pub use sources::{
     HostSource, SourceKind, SourceOrder, StageSourceInput, StagedSource, StagedSourceRef,
 };
 
+/// Keep requested level names until caller admission. MI §3 assigns an
+/// unknown level a capability error that echoes the original request.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct IncomingRequest {
+    #[serde(default)]
+    requires: Vec<String>,
+    #[serde(flatten)]
+    pub request: Request,
+}
+
+impl IncomingRequest {
+    pub fn resolve(mut self) -> Result<Request, Response> {
+        for level in self.requires {
+            let Some(bundle) = Bundle::from_wire(&level) else {
+                return Err(Response::failed(
+                    &self.request,
+                    &KipError::unsupported_capability(format!("unknown memory level {level}")),
+                ));
+            };
+            self.request.requires.push(bundle);
+        }
+        Ok(self.request)
+    }
+}
+
 /// Where this binding keeps its private orchestration state: staged sources,
 /// idempotency keys, receipts, retained recall bases and erasure plans.
 /// Native facts stay in the Nexus.

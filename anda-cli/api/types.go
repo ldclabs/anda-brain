@@ -778,5 +778,13 @@ func (r *KipResponse[T]) Failure() error {
 	if r.Status != "succeeded" {
 		return fmt.Errorf("KIP status: %s", r.Status)
 	}
+	if len(r.Results) == 0 {
+		return fmt.Errorf("successful KIP response has no operation results")
+	}
+	for i, result := range r.Results {
+		if result.Status != "succeeded" && result.Status != "no_effect" {
+			return fmt.Errorf("KIP operation %d has unconfirmed status %q", i+1, result.Status)
+		}
+	}
 	return nil
 }

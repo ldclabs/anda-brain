@@ -3,8 +3,8 @@
 //! receipt progress and erasure plans. Every handle is readable only by the
 //! caller that received it.
 use super::*;
-use crate::memory_interface::StageSourceInput;
-use anda_kip::memory::binding::{Operation, Request as MemoryRequest, Response as MemoryResponse};
+use crate::memory_interface::{IncomingRequest, StageSourceInput};
+use anda_kip::memory::binding::{Operation, Response as MemoryResponse};
 
 /// A KIP error as an HTTP error, for the helper endpoints (the intent
 /// endpoint carries errors inside its Response).
@@ -40,14 +40,14 @@ pub async fn post_memory(
     AppBytes(body): AppBytes,
 ) -> Result<Response, AppError> {
     ensure_sharding(&app, sharding)?;
-    let request: MemoryRequest = ct
+    let incoming: IncomingRequest = ct
         .parse_body(&body)
         .map_err(AppError::bad_request)?
         .value()
         .map_err(|_| {
             AppError::bad_request("expected a Memory Interface request object".to_string())
         })?;
-    let (space, caller) = if request.operation == Operation::Recall {
+    let (space, caller) = if incoming.request.operation == Operation::Recall {
         let (space, caller) = read_public(&app, &space_id, &token, sharding, unix_ms()).await?;
         if let Some(reason) = caller.recall_forbidden() {
             return Err(AuthzError::Forbidden(reason).into());
@@ -63,6 +63,10 @@ pub async fn post_memory(
             unix_ms(),
         )
         .await?
+    };
+    let request = match incoming.resolve() {
+        Ok(request) => request,
+        Err(response) => return Ok(ct.response(response).into_response()),
     };
     let namespace = caller.namespace();
     // A recall runs a model pass; it shares the LLM request budget.

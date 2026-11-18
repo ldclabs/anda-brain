@@ -2,7 +2,7 @@
 
 **[English](API.md) | [中文](API_cn.md)**
 
-本文档规定 Rust `anda_brain` 服务的 HTTP 与 MCP 接口（0.13.4，对齐 KIP `11a82ec` /
+本文档规定 Rust `anda_brain` 服务的 HTTP 与 MCP 接口（对齐 KIP `f63848e` /
 `kip://profiles/cognitive-memory@2.0.0`）。总览、配置与部署见[技术参考](README.md)；
 面向智能体的用法见 [SKILL.md](SKILL.md)；运行时接入与恢复见 [RUNTIME_cn.md](RUNTIME_cn.md)。
 Cloudflare Worker 是另一套能力更少的实现，见[其 README](../anda-brain-worker/README.md)

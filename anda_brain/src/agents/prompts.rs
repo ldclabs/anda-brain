@@ -28,9 +28,10 @@ pub fn language_reference() -> &'static str {
     static REFERENCE: OnceLock<String> = OnceLock::new();
     REFERENCE.get_or_init(|| {
         format!(
-            "{}\n\n---\n\n{}",
+            "{}\n\n---\n\n{}\n\n---\n\n{}",
             anda_kip::KIP_SYNTAX,
-            anda_kip::COGNITIVE_MEMORY_PROFILE
+            anda_kip::COGNITIVE_MEMORY_PROFILE,
+            anda_kip::KIP_VOCABULARY_CARD
         )
     })
 }
@@ -176,6 +177,7 @@ mod tests {
         ] {
             let reference = mode_reference(target);
             assert_eq!(reference.matches(anda_kip::KIP_SYNTAX).count(), 1);
+            assert_eq!(reference.matches(anda_kip::KIP_VOCABULARY_CARD).count(), 1);
             assert_eq!(
                 reference
                     .matches(anda_kip::COGNITIVE_MEMORY_PROFILE)

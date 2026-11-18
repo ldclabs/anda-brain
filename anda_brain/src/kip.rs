@@ -117,7 +117,7 @@ pub fn error_of(response: &Response) -> Option<&ErrorObject> {
     response
         .error
         .as_ref()
-        .or_else(|| response.results.first().and_then(|r| r.error.as_ref()))
+        .or_else(|| response.results.iter().find_map(|r| r.error.as_ref()))
 }
 
 /// The error a failed response reports, as a [`KipError`] keeping its code,
@@ -1137,13 +1137,14 @@ mod tests {
 
     #[test]
     fn an_operation_level_failure_is_not_read_as_an_empty_success() {
-        let response = Response::from_results(vec![OperationResult::failed(
-            KipError::not_found_or_not_visible("nothing here"),
-        )]);
+        let response = Response::from_results(vec![
+            OperationResult::ok(json!(1)),
+            OperationResult::failed(KipError::not_found_or_not_visible("nothing here")),
+        ]);
         assert!(response.error.is_none(), "the failure is per-operation");
         assert!(!succeeded(&response));
         assert_eq!(ok_result(&response), None);
-        assert!(error_of(&response).is_some());
+        assert_eq!(error_of(&response).unwrap().code, "NotFoundOrNotVisible");
     }
 
     #[test]

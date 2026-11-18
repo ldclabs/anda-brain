@@ -181,6 +181,12 @@ func (c *Client) ExecuteKIPReadonly(ctx context.Context, input *KipRequest) (*Ki
 	if err := DecodeJSON(data, &resp); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
+	if resp.Status == "succeeded" && input != nil {
+		expected := max(1, len(input.Operations))
+		if len(resp.Results) != expected {
+			return &resp, fmt.Errorf("KIP returned %d results for %d operations", len(resp.Results), expected)
+		}
+	}
 	return &resp, nil
 }
 

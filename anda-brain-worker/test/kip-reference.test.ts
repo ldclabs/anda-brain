@@ -20,8 +20,10 @@ class SequenceAi implements AiBinding {
 
 describe('embedded KIP references', () => {
   it('reassembles every compiled document and verifies release hashes without I/O', async () => {
-    expect(REFERENCE_VERSION).toBe('0.14.2')
-    expect(REFERENCE_DOCUMENTS).toHaveLength(24)
+    expect(readReference({ document: 'vocabulary', section: null, offset: 0 })).toMatchObject({
+      crate_version: REFERENCE_VERSION, source: 'brain/KIPVocabulary.md',
+    })
+    expect(REFERENCE_DOCUMENTS).toHaveLength(25)
     for (const doc of REFERENCE_DOCUMENTS) {
       let offset: number | null = 0
       let text = ''

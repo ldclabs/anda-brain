@@ -37,7 +37,7 @@ if (!existsSync(kip)) {
 
 /** Copied byte for byte; the Worker is the only consumer that needs a copy. */
 const VERBATIM = [
-  ...['KIPFormation.md', 'KIPRecall.md', 'KIPMaintenance.md', 'MemoryInterface.md'].map(
+  ...['KIPFormation.md', 'KIPRecall.md', 'KIPMaintenance.md', 'KIPVocabulary.md', 'MemoryInterface.md'].map(
     (name) => [join(kip, 'brain', name), `anda-brain-worker/assets/${name}`],
   ),
   [join(kip, 'KIPSyntax.md'), 'anda-brain-worker/assets/KIPSyntax.md'],

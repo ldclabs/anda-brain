@@ -17,7 +17,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ldclabs/kip-do": "^0.14.0"
+    "@ldclabs/kip-do": "^0.14.6"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.20.2",

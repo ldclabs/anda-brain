@@ -1,6 +1,5 @@
-# Build context for anda_brain/Dockerfile (context is the repo root, and the
-# builder stage runs `COPY . .`). The Rust build only needs Cargo.toml,
-# Cargo.lock and anda_brain/ (the sole workspace member).
+# Build context for anda_brain/Dockerfile, rooted at the repository. The Rust
+# build only needs Cargo.toml, Cargo.lock and anda_brain/ (the sole member).
 
 # Secrets: never bake env files into image layers.
 .env*

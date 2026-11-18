@@ -6,7 +6,10 @@ use serde::Deserialize;
 use serde_json::json;
 use std::sync::LazyLock;
 
-const VERSION: &str = "0.14.2";
+static MANIFEST: LazyLock<Json> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("../assets/kip-reference/manifest.json"))
+        .expect("generated KIP reference manifest")
+});
 const PAGE_BYTES: usize = 8192;
 
 pub(crate) const INSTRUCTIONS: &str = "# Embedded KIP references\n\
@@ -50,6 +53,11 @@ static DOCUMENTS: LazyLock<Vec<Document>> = LazyLock::new(|| {
             anda_kip::COGNITIVE_MEMORY_PROFILE
         ),
         doc!("recall", "brain/KIPRecall.md", anda_kip::KIP_RECALL_CARD),
+        doc!(
+            "vocabulary",
+            "brain/KIPVocabulary.md",
+            anda_kip::KIP_VOCABULARY_CARD
+        ),
         doc!(
             "formation",
             "brain/KIPFormation.md",
@@ -269,7 +277,7 @@ impl KipReferenceTool {
         let (text, next_offset) = page(content, args.offset)?;
         Ok(
             json!({"document":args.document, "section":args.section, "source":source,
-            "crate_version":VERSION, "protocol":"KIP 2.0", "offset":args.offset,
+            "crate_version":MANIFEST["version"], "protocol":"KIP 2.0", "offset":args.offset,
             "total_bytes":content.len(), "next_offset":next_offset, "content":text}),
         )
     }
@@ -316,10 +324,8 @@ mod tests {
 
     #[test]
     fn embedded_assets_match_the_pinned_release_manifest() {
-        let manifest: Json =
-            serde_json::from_str(include_str!("../assets/kip-reference/manifest.json")).unwrap();
-        assert_eq!(manifest["version"], VERSION);
-        for (source, expected) in manifest["sha256"].as_object().unwrap() {
+        assert!(MANIFEST["version"].as_str().is_some_and(|v| !v.is_empty()));
+        for (source, expected) in MANIFEST["sha256"].as_object().unwrap() {
             let document = DOCUMENTS
                 .iter()
                 .find(|d| d.source.split(" (").next() == Some(source.as_str()))

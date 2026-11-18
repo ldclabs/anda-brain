@@ -483,14 +483,14 @@ The normative field shapes in `../schemas/kip-cognitive-records.schema.json` are
 | AttemptRecord | action_attempt Activity | Validated Learning §2 |
 | TrialRecord | completed trial_open Activity | Validated Learning §4 |
 | EvaluationRecord | completed lifecycle_verdict Activity | Validated Learning §4 |
-| ProcedureAssessment | assessment Activity | Validated Learning §5 |
+| ProcedureAssessment | skill_validation Activity | Validated Learning §5 |
 | WatchState | Watch | Brain Runtime §2 |
 | LeaseState | SleepTask | Brain Runtime §3 |
-| RestoreReport | restore Activity | Capsule §41.7 |
+| RestoreReport | import Activity | Capsule §41.7 |
 
 DependencyBasis is immutable on the process record, not a backdoor to rewrite an Assertion's premises. All ordinary derived Recall computes `_system.dependency_validity` (Specification §57.6) before using an artifact; a missing or incomplete basis is `unverifiable`. WatchState and LeaseState are operational state validated by the runtime, not author claims that confer authority.
 
-A semantic forgetting workflow validates an ErasurePlan (Specification §60.7); a payload-only purge is a narrower scope and cannot claim semantic forgetting.
+A semantic forgetting workflow validates a standalone **ErasurePlan** (`../schemas/kip-cognitive-records.schema.json#/$defs/ErasurePlan`, Specification §60.7); unlike the Facets above, `ErasurePlan` is a control/workflow contract rather than an Element Facet because it governs and survives the purging of elements. A payload-only purge is a narrower scope and cannot claim semantic forgetting.
 
 # 7. Standard Structural Fields
 
@@ -726,7 +726,7 @@ Distinguish one stated preference, repeated behavior, context-specific preferenc
 
 Explicit statements remain Evidence + Assertions. A summary of a stable pattern is an Insight (§5.5), never replacement history.
 
-A changed preference is a new `prefers` Assertion from the time it changed, carrying `at` (the time of the statement) so that its start key is when the person said it, not when the Brain wrote it (Specification §13.2); temporal succession (Specification §25.4) ends the old one within its kind, and the old preference still answers for its time. A task-only preference ("use tabs in this repository") is scoped to that task's context and prevails there under `kip:memory-default` (Specification §21.13) without replacing the general one.
+A changed preference is a new `prefers` Assertion from the time it changed, carrying `at` (the time of the statement) so that its start key is when the person said it, not when the Brain wrote it (Specification §13.2); temporal succession (Specification §25.4) ends the old one within its kind, and the old preference still answers for its time. A task-only preference ("use tabs in this repository") is scoped to that task's context and prevails over a general rival under `kip:memory-default` (Specification §21.13) when `context_specificity` decides the whole conflict set, without replacing the general history. Because succession lines are partitioned by `(actor, context_refs)`, revising or lifting that task-scoped claim itself requires a new Assertion or retraction in the same `context_refs` scope; a newer general preference (`context_refs: []`) updates only the general succession line. If no candidate wins `context_specificity` over the whole set, later rules may still select the general preference as final belief without ending the scoped claims.
 
 # 16. Self-Model Formation
 

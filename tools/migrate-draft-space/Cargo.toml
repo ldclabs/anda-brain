@@ -16,13 +16,16 @@ db13 = { package = "anda_db", version = "=0.13.2", features = ["full"] }
 kip13 = { package = "anda_kip", version = "=0.13.1" }
 store13 = { package = "anda_object_store", version = "=0.13.0" }
 # The KIP 2.0 engine the Space is rebuilt on (write side).
-anda_cognitive_nexus = "0.14.0"
-anda_db = { version = "0.14", features = ["full"] }
-anda_kip = "=0.14.0"
+anda_cognitive_nexus = "0.14.6"
+anda_db = { version = "0.14.3", features = ["full"] }
+anda_kip = "0.14.6"
 anda_object_store = "0.14"
 object_store = { version = "0.14", features = ["fs"] }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
+
+[dev-dependencies]
+tempfile = "3"
 

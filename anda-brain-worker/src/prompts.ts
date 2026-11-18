@@ -23,6 +23,7 @@ import {
   KIP_FORMATION_CARD,
   KIP_RECALL_CARD,
   KIP_MAINTENANCE_CARD,
+  KIP_VOCABULARY_CARD,
   KIP_SYNTAX,
 } from './assets.generated.js'
 import type { FormationInput, MaintenanceInput, RecallInput } from './types.js'
@@ -33,7 +34,7 @@ import type { FormationInput, MaintenanceInput, RecallInput } from './types.js'
  * The structured AI runner can serve bounded reference requests for details.
  */
 const reference = (card: string): string =>
-  `${card}\n\n${KIP_SYNTAX}\n\n${COGNITIVE_MEMORY_PROFILE}\n\n` +
+  `${card}\n\n${KIP_SYNTAX}\n\n${COGNITIVE_MEMORY_PROFILE}\n\n${KIP_VOCABULARY_CARD}\n\n` +
   `Brain adapter capabilities (distinct from engine Schema): ${JSON.stringify(BRAIN_CAPABILITIES)}`
 
 export function formationMessages(

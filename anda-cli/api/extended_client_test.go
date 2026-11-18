@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -112,5 +113,37 @@ func TestExecuteKIPReadonlyDecodesBothResultLevels(t *testing.T) {
 	}
 	if len(response.Results) != 1 || response.Failure() == nil {
 		t.Fatalf("KIP result or operation-level error lost: %+v", response)
+	}
+}
+
+func TestExecuteKIPReadonlyKeepsIncompleteBatchForInspection(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"kip":"2.0","status":"succeeded","results":[{"status":"succeeded"}]}`))
+	}))
+	defer server.Close()
+	command := "DESCRIBE PRIMER"
+	request := &KipRequest{Operations: []KipOperation{{String: &command}, {String: &command}}, Execution: &KipExecution{Mode: "independent"}}
+	response, err := NewClient(server.URL, "s", "").ExecuteKIPReadonly(context.Background(), request)
+	if err == nil || response == nil || len(response.Results) != 1 {
+		t.Fatalf("expected the partial response and a result-count error, got %+v, %v", response, err)
+	}
+}
+
+func TestMemoryDefaultsWireVersionWithoutChangingCallerRequest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var sent MemoryRequest
+		if err := json.NewDecoder(r.Body).Decode(&sent); err != nil || sent.KipMemory != MemoryInterfaceVersion {
+			t.Errorf("wire version: %q, %v", sent.KipMemory, err)
+		}
+		_, _ = w.Write([]byte(`{"kip_memory":"2.0","operation":"recall","status":"succeeded"}`))
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "s", "")
+	request := &MemoryRequest{Operation: "recall", Input: json.RawMessage(`{"mode":"attention"}`)}
+	if _, err := client.Memory(context.Background(), request); err != nil || request.KipMemory != "" {
+		t.Fatalf("caller request changed or send failed: %+v, %v", request, err)
+	}
+	if _, err := client.Memory(context.Background(), nil); err == nil {
+		t.Fatal("accepted a nil request")
 	}
 }

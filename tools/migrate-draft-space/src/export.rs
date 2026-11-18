@@ -28,11 +28,17 @@ pub struct Fact {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub key: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub canonical_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub schema_ref: String,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct Exported {
+    #[serde(default)]
+    pub database: String,
+    #[serde(default)]
+    pub space_created_at: String,
     pub capsule: Json,
     pub facts: Vec<Fact>,
     pub self_concept: String,
@@ -67,6 +73,10 @@ pub async fn export(root: &Path, space: &str) -> Result<Exported, BoxError> {
     );
     let nexus = CognitiveNexus::connect(db.clone()).await?;
     let store = &nexus.store;
+    if store.spaces().len() != 1 {
+        nexus.close().await?;
+        return Err("migration requires a database containing only the default Nexus Space".into());
+    }
 
     // Every element of the Space in id order, so an import into an empty
     // Nexus mints the same ids.
@@ -88,9 +98,9 @@ pub async fn export(root: &Path, space: &str) -> Result<Exported, BoxError> {
             if element.space() != DEFAULT_SPACE {
                 continue;
             }
-            let key = match &element {
-                Element::Concept(row) => row.key.clone(),
-                _ => String::new(),
+            let (key, canonical_id) = match &element {
+                Element::Concept(row) => (row.key.clone(), row.canonical_id.clone()),
+                _ => (String::new(), String::new()),
             };
             if let Element::Evidence(row) = &element {
                 // The exporter withholds Evidence payloads as unavailable;
@@ -126,6 +136,7 @@ pub async fn export(root: &Path, space: &str) -> Result<Exported, BoxError> {
                 kind: prefix.to_string(),
                 state: element.state().to_string(),
                 key,
+                canonical_id,
                 schema_ref: element.schema_ref().to_string(),
             });
             roots.push(eid);
@@ -157,12 +168,14 @@ pub async fn export(root: &Path, space: &str) -> Result<Exported, BoxError> {
         external.retain(|r| !r["id"].as_str().is_some_and(|id| id.starts_with("E-")));
     }
 
-    let self_concept = store.get_space(DEFAULT_SPACE).await?.self_concept;
+    let source = store.get_space(DEFAULT_SPACE).await?;
     // Closes the database too.
     nexus.close().await?;
     Ok(Exported {
+        database: space.to_string(),
+        space_created_at: source.created_at,
         capsule,
         facts,
-        self_concept,
+        self_concept: source.self_concept,
     })
 }

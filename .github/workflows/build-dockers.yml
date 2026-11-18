@@ -14,11 +14,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: Swatinem/rust-cache@v2
       - name: Build the Docker image
+        env:
+          BUILD_TAG: ${{ inputs.build_tag }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login --username ${{ github.actor }} --password-stdin ${{ env.REGISTRY }}
-          IMAGE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}_amd64:${{ inputs.build_tag }}"
-          LATEST_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}_amd64:latest"
-          TAGS="-t ${IMAGE_TAG} -t ${LATEST_TAG}"
-          docker build -f anda_brain/Dockerfile $TAGS --push .
+          printf '%s\n' "$REGISTRY_TOKEN" | docker login --username "$GITHUB_ACTOR" --password-stdin "$REGISTRY"
+          image="${REGISTRY}/${IMAGE_NAME}_amd64"
+          docker build -f anda_brain/Dockerfile --tag "$image:$BUILD_TAG" --tag "$image:latest" --push .
