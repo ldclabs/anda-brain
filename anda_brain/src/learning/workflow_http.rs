@@ -2,7 +2,7 @@
 //! The host implements real reset/inspect/prepare/commit and records actual
 //! state transitions. A separate credential reads the instrument's journal.
 //! This adapter supplies no business model, test labels or calibration scores.
-use super::*;
+use super::{runtime::time_ms, *};
 use anda_cognitive_nexus::{content_digest, governance::AuthContext};
 use anda_core::{BoxError, BoxPinFut, Json};
 use anda_engine::model::reqwest::{self, Url};
@@ -309,10 +309,12 @@ fn dispatch_header(ticket: &DispatchTicket) -> Result<Json, BoxError> {
         .pairs
         .get(&ticket.pair_id)
         .ok_or("workflow pair is not frozen")?;
+    let budget_deadline =
+        time_ms(&ticket.started_at)?.saturating_add(ticket.plan.execution.budget.elapsed_ms);
     Ok(
         json!({"format":FORMAT,"dispatch_id":ticket.dispatch_id,"attempt_ref":ticket.attempt_ref,
         "task_ref":ticket.task_ref,"fencing_token":ticket.fencing_token,
-        "deadline_ms": ticket.deadline_ms.min(anda_cognitive_nexus::time::parse(&ticket.started_at)?.timestamp_millis() as u64 + ticket.plan.execution.budget.elapsed_ms),
+        "deadline_ms": ticket.deadline_ms.min(budget_deadline),
         "case":case,"environment_digest":ticket.plan.environment_digest,"model_digest":ticket.plan.model_digest,
         "base_memory_digest":ticket.plan.base_memory_digest,"tool_versions":ticket.plan.tool_versions,"budget":ticket.plan.execution.budget}),
     )
@@ -536,8 +538,7 @@ pub fn verify_journal(
         || journal.initial_state.prepared
         || journal.initial_state.committed
         || journal.events.len() > 64
-        || journal.started_at_ms
-            < anda_cognitive_nexus::time::parse(&ticket.started_at)?.timestamp_millis() as u64
+        || journal.started_at_ms < time_ms(&ticket.started_at)?
         || journal
             .finished_at_ms
             .is_some_and(|n| n < journal.started_at_ms || n > anda_engine::unix_ms())

@@ -47,7 +47,7 @@ anda_db_tfs = { workspace = true }
 axum = { workspace = true }
 clap = { workspace = true }
 cbor2 = { workspace = true }
-chrono = { workspace = true }
+jiff = { workspace = true }
 dotenv = { workspace = true }
 ic_auth_types = { workspace = true }
 ic_cose_types = { workspace = true }

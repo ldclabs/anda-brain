@@ -379,12 +379,9 @@ async fn expired_lease_requires_new_fence_before_terminal_bookkeeping() {
         + std::time::Duration::from_secs(2);
     input.lease_expires_at = anda_cognitive_nexus::time::format(expiry);
     let admission = native.authorize_dispatch(&input).await.unwrap();
-    let remaining =
-        expiry - anda_cognitive_nexus::time::parse(&anda_cognitive_nexus::time::now()).unwrap();
-    tokio::time::sleep(
-        remaining.to_std().unwrap_or_default() + std::time::Duration::from_millis(5),
-    )
-    .await;
+    let now = anda_cognitive_nexus::time::parse(&anda_cognitive_nexus::time::now()).unwrap();
+    let remaining = std::time::Duration::try_from(expiry.duration_since(now)).unwrap_or_default();
+    tokio::time::sleep(remaining + std::time::Duration::from_millis(5)).await;
     let stale = anda_kip::execute_request(
         nexus.as_ref(),
         &anda_kip::Request::single(format!(

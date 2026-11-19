@@ -586,9 +586,8 @@ async fn r2_twenty_spaces_two_hundred_watches_meet_deadline_p95() {
         assert_eq!(wake_count(&space).await, 10);
         let result=space.execute_kip_readonly(kip::request(r#"FIND(?a._system.created_at) WHERE {?a ACTIVITY {activity_class:"watch_fire"}} LIMIT 20"#)).await.unwrap();
         for at in kip::ok_result(&result).unwrap().as_array().unwrap() {
-            let at = anda_cognitive_nexus::time::parse(at.as_str().unwrap())
-                .unwrap()
-                .timestamp_millis() as u64;
+            let utc = anda_cognitive_nexus::time::parse(at.as_str().unwrap()).unwrap();
+            let at = kip::unix_time_ms(utc).unwrap();
             lags.push(at.saturating_sub(due));
         }
         space.close().await.unwrap();

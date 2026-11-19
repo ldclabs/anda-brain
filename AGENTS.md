@@ -32,13 +32,13 @@ write KIP directly.
 
 The service tracks KIP `f63848e` and `kip://profiles/cognitive-memory@2.0.0`
 (content digest `sha256:6639aa46…`; the draft rewrote 2.0.0 in place, so only the
-digest names a revision). It depends on the 0.14 DB/KIP stack and `anda_engine` 0.17
-from crates.io; `Cargo.lock` is the record of resolved versions. Brain needs at
-least `anda_cognitive_nexus` and `anda_kip` 0.14.6 for the current Profile and vocabulary card, and
-`anda_core`/`anda_engine` 0.17 (context traits without remote calls, and a
-`handoff` that queues its own continuation prompt); the reference
-supplement is generated from the locked `anda_kip` (`scripts/sync-kip-reference.mjs`
-checks the source against `Cargo.lock`). `tiktoken-rs` is held to 0.12.x: the Recall
+digest names a revision). It uses AndaDB 0.14, KIP and Cognitive Nexus 0.15,
+`anda_core` 0.17.3 and `anda_engine` 0.18 from crates.io. The engine's
+`tool_call` returns the tool output and `handoff` queues its own continuation
+prompt. The reference supplement is generated from the locked `anda_kip`.
+`scripts/sync-kip-reference.mjs` checks the source against `Cargo.lock`.
+
+`tiktoken-rs` is held to 0.12.x. The Recall
 tokenizer identity `o200k_base@tiktoken-rs-0.12` names that line, and `…-0.12.0`
 stays accepted. The Worker uses `@ldclabs/kip-do` 0.14 from npm. The commented
 `[patch.crates-io]` block in `Cargo.toml` is for developing against sibling

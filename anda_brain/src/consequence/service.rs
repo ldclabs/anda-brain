@@ -950,6 +950,6 @@ impl ConsequenceRuntime {
 }
 
 pub(super) fn time_ms(t: &str) -> RuntimeResult<u64> {
-    u64::try_from(anda_cognitive_nexus::time::parse(t)?.timestamp_millis())
+    crate::kip::unix_time_ms(anda_cognitive_nexus::time::parse(t)?)
         .map_err(|_| RuntimeError::Invalid("invalid observation time".into()))
 }

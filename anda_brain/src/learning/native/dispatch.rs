@@ -119,8 +119,11 @@ impl NativeLearning {
                 .as_str()
                 .ok_or_else(|| invalid("attempt start missing"))?,
         )?;
-        let max_expiry =
-            started + std::time::Duration::from_millis(input.plan.execution.budget.elapsed_ms);
+        let max_expiry = started
+            .checked_add(std::time::Duration::from_millis(
+                input.plan.execution.budget.elapsed_ms,
+            ))
+            .map_err(|_| invalid("attempt expiry is outside the KIP calendar range"))?;
         if expires != input.lease_expires_at
             || anda_cognitive_nexus::time::parse(&expires)? > max_expiry
             || expires <= anda_cognitive_nexus::time::now()

@@ -25,6 +25,10 @@ use anda_kip::{
     KipError, KipValue, Map, MutationClause, Request, Response, Scalar, TopLevelStatus,
     execute_request, transition_state,
 };
+use jiff::{SignedDuration, civil::DateTime, fmt::strtime::BrokenDownTime, tz::Offset};
+use std::num::TryFromIntError;
+
+const UNIX_EPOCH: DateTime = jiff::civil::datetime(1970, 1, 1, 0, 0, 0, 0);
 
 /// Builds a single-operation request from one command string.
 pub fn request(command: impl Into<String>) -> Request {
@@ -50,16 +54,22 @@ pub fn timestamp(now_ms: u64) -> String {
 /// canonicalized; an unparseable value or sub-millisecond precision is refused
 /// rather than replaced, because the instant is the claim's start key.
 pub(crate) fn source_timestamp(value: &str) -> Result<String, String> {
-    let parsed = chrono::DateTime::parse_from_rfc3339(value.trim())
-        .map_err(|_| format!("timestamp {value:?} is not an RFC 3339 instant"))?;
-    if parsed.timestamp_subsec_nanos() % 1_000_000 != 0 {
+    let parsed = Rfc3339Instant::parse(value)
+        .ok_or_else(|| format!("timestamp {value:?} is not an RFC 3339 instant"))?;
+    if !parsed
+        .local
+        .subsec_nanosecond()
+        .unsigned_abs()
+        .is_multiple_of(1_000_000)
+    {
         return Err(format!(
             "timestamp {value:?} is finer than milliseconds; KIP timestamps are millisecond UTC"
         ));
     }
-    let canonical = parsed
-        .to_utc()
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let utc = parsed.utc().ok_or_else(|| {
+        format!("timestamp {value:?} cannot be represented as a KIP UTC timestamp")
+    })?;
+    let canonical = anda_cognitive_nexus::time::format(utc);
     anda_kip::timestamp::parse(&canonical, "timestamp").map_err(|err| err.to_string())?;
     Ok(canonical)
 }
@@ -70,12 +80,9 @@ pub(crate) fn source_timestamp(value: &str) -> Result<String, String> {
 /// observation rather than a new wall-clock instant.
 pub(crate) fn observation_timestamp(value: Option<&str>, received_at: u64) -> String {
     value
-        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value.trim()).ok())
-        .map(|value| {
-            value
-                .to_utc()
-                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-        })
+        .and_then(Rfc3339Instant::parse)
+        .and_then(Rfc3339Instant::utc)
+        .map(anda_cognitive_nexus::time::format)
         .filter(|value| anda_kip::timestamp::parse(value, "timestamp").is_ok())
         .unwrap_or_else(|| timestamp(received_at))
 }
@@ -83,9 +90,80 @@ pub(crate) fn observation_timestamp(value: Option<&str>, received_at: u64) -> St
 /// The Unix-millisecond instant of an RFC 3339 timestamp stored in memory, or
 /// `None` when it does not read as one.
 pub(crate) fn time_ms(value: &str) -> Option<u64> {
-    chrono::DateTime::parse_from_rfc3339(value.trim())
-        .ok()
-        .and_then(|instant| u64::try_from(instant.timestamp_millis()).ok())
+    let instant = Rfc3339Instant::parse(value)?;
+    let mut elapsed =
+        instant.local.duration_since(UNIX_EPOCH) - instant.offset.duration_since(Offset::UTC);
+    if instant.leap_second {
+        elapsed += SignedDuration::from_secs(1);
+    }
+    // Check before truncating so a fractional instant just before 1970 is refused.
+    if elapsed.is_negative() {
+        return None;
+    }
+    u64::try_from(elapsed.as_millis()).ok()
+}
+
+/// Converts a parsed, millisecond-precision KIP UTC datetime to Unix milliseconds.
+pub(crate) fn unix_time_ms(utc: DateTime) -> Result<u64, TryFromIntError> {
+    u64::try_from(utc.duration_since(UNIX_EPOCH).as_millis())
+}
+
+struct Rfc3339Instant {
+    local: DateTime,
+    offset: Offset,
+    leap_second: bool,
+}
+
+impl Rfc3339Instant {
+    fn parse(value: &str) -> Option<Self> {
+        let value = value.trim();
+        let (whole, mut suffix) = value.split_at_checked(19)?;
+        // Require the RFC 3339 calendar and clock spelling before parsing with Jiff.
+        if !whole.bytes().enumerate().all(|(index, byte)| match index {
+            4 | 7 => byte == b'-',
+            10 => matches!(byte, b'T' | b't' | b' '),
+            13 | 16 => byte == b':',
+            _ => byte.is_ascii_digit(),
+        }) {
+            return None;
+        }
+
+        let mut end = whole.len();
+        if let Some(fraction) = suffix.strip_prefix('.') {
+            let digits = fraction.bytes().take_while(u8::is_ascii_digit).count();
+            if digits == 0 {
+                return None;
+            }
+            // Existing stored strings can specify more than nine fractional digits.
+            end += 1 + digits.min(9);
+            suffix = &fraction[digits..];
+        }
+        let offset = match suffix.as_bytes() {
+            [b'Z' | b'z'] => Offset::UTC,
+            [b'+' | b'-', h1, h2, b':', m1, m2]
+                if [*h1, *h2] <= *b"23" && [h1, h2, m1, m2].into_iter().all(u8::is_ascii_digit) =>
+            {
+                BrokenDownTime::parse("%:z", suffix).ok()?.offset()?
+            }
+            _ => return None,
+        };
+
+        Some(Self {
+            local: value[..end].parse().ok()?,
+            // Jiff reads :60 as :59. Keep the original second for legacy reads.
+            leap_second: &whole.as_bytes()[17..19] == b"60",
+            offset,
+        })
+    }
+
+    fn utc(self) -> Option<DateTime> {
+        if self.leap_second {
+            return None;
+        }
+        self.local
+            .checked_sub(self.offset.duration_since(Offset::UTC))
+            .ok()
+    }
 }
 
 /// Builds a single-operation request with its parameter bindings.
@@ -1404,8 +1482,43 @@ mod tests {
             source_timestamp("2026-09-22T00:00:00.5Z").unwrap(),
             "2026-09-22T00:00:00.500Z"
         );
-        assert!(source_timestamp("yesterday").is_err());
-        assert!(source_timestamp("2026-09-22T00:00:00.000123Z").is_err());
+        assert_eq!(
+            source_timestamp("9999-12-31T22:59:59.999-01:00").unwrap(),
+            "9999-12-31T23:59:59.999Z"
+        );
+        for invalid in [
+            "yesterday",
+            "2026-09-22T00:00:00.000123Z",
+            "2026-09-22T00:00:00Z[UTC]",
+            "2026-09-22T00:00Z",
+            "2026-09-22T00:00:00+25:00",
+            "2016-12-31T23:59:60Z",
+        ] {
+            assert!(source_timestamp(invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn stored_observation_timestamps_truncate_or_use_receipt_time() {
+        assert_eq!(
+            observation_timestamp(Some(" 1970-01-01 01:00:00.123456789123+01:00 "), 42),
+            "1970-01-01T00:00:00.123Z"
+        );
+        assert_eq!(
+            observation_timestamp(Some("2016-12-31T23:59:60Z"), 42),
+            "1970-01-01T00:00:00.042Z"
+        );
+    }
+
+    #[test]
+    fn stored_instants_convert_to_unix_milliseconds() {
+        assert_eq!(time_ms("1969-12-31T23:59:59.999999999Z"), None);
+        assert_eq!(time_ms("1969-12-31T23:59:60.123Z"), Some(123));
+        assert_eq!(time_ms("1970-01-01t01:00:00.123456789123+01:00"), Some(123));
+        assert_eq!(
+            time_ms("9999-12-31T23:59:59.999-01:00"),
+            Some(253_402_304_399_999)
+        );
     }
 
     #[test]

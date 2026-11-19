@@ -235,8 +235,8 @@ fn next(n: u64) -> Result<u64, BoxError> {
         .ok_or_else(|| "attention counter exhausted".into())
 }
 fn time_ms(value: &str) -> Result<u64, BoxError> {
-    Ok(u64::try_from(
-        anda_cognitive_nexus::time::parse(value)?.timestamp_millis(),
+    Ok(crate::kip::unix_time_ms(
+        anda_cognitive_nexus::time::parse(value)?,
     )?)
 }
 fn min_due(old: &mut Option<u64>, new: u64) {

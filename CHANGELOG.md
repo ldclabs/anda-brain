@@ -11,15 +11,18 @@ Cloudflare Worker package is 0.1.3.
 
 ### Dependencies
 
-- The Rust service uses `anda_kip` and `anda_cognitive_nexus` 0.14.6, tracking KIP `f63848e`
+- The Rust service uses `anda_kip` and `anda_cognitive_nexus` 0.15.0, tracking KIP `f63848e`
   and the `cognitive-memory@2.0.0` revision with content digest `sha256:6639aa46…`.
   Formation, Recall and Maintenance load the upstream standard vocabulary card.
   Both reference tools expose it as `document="vocabulary"`. The Worker uses
   `@ldclabs/kip-do` 0.14.6 and `@ldclabs/kip-lang` 2.4.3. Restart any KIP
   query pagination opened under the previous Worker engine. `CHANGES` can
   continue from its saved sequence.
-- The Rust lockfile resolves `anda_db` 0.14.3, `anda_core` 0.17.2 and
-  `anda_engine` 0.17.5.
+- The Rust lockfile resolves `anda_db` 0.14.3, `anda_object_store` 0.14.1,
+  `anda_core` 0.17.3 and `anda_engine` 0.18.0. Rust hosts share these
+  engine and KIP/Nexus versions when passing their types to Brain.
+- Jiff handles RFC 3339 source timestamps, legacy observation times and
+  learning deadlines. KIP reference provenance follows the locked Rust SDK.
 
 ### Fixed
 

@@ -1608,14 +1608,9 @@ impl LearningRuntime {
         self.tasks.wait().await;
     }
 }
-fn time_ms(value: &str) -> Result<u64, BoxError> {
-    let n = anda_cognitive_nexus::time::normalize(value, "learning timestamp")?;
-    if n != value {
-        return Err("canonical UTC learning timestamp required".into());
-    }
-    Ok(u64::try_from(
-        anda_cognitive_nexus::time::parse(value)?.timestamp_millis(),
-    )?)
+pub(super) fn time_ms(value: &str) -> Result<u64, BoxError> {
+    let utc = anda_kip::timestamp::parse(value, "learning timestamp")?;
+    Ok(crate::kip::unix_time_ms(utc)?)
 }
 
 #[cfg(test)]

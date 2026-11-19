@@ -98,7 +98,6 @@ dependencies = [
  "async-trait",
  "axum",
  "cbor2",
- "chrono",
  "clap",
  "cose2",
  "dotenv",
@@ -106,6 +105,7 @@ dependencies = [
  "http",
  "ic_auth_types",
  "ic_cose_types",
+ "jiff",
  "log",
  "mimalloc",
  "object_store",
@@ -145,18 +145,18 @@ dependencies = [
 
 [[package]]
 name = "anda_cognitive_nexus"
-version = "0.14.6"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36c04b08dbb67d9a89e2bc28a8a7b8b73f44f3947a01574fde8ec605ad187b07"
+checksum = "d41b6f7704a78eba5ad3993f10e2a5b715751c6d3cdc91c6cc2c97cc96b8488d"
 dependencies = [
  "anda_db",
  "anda_db_schema",
  "anda_db_tfs",
  "anda_kip",
  "async-trait",
- "chrono",
  "futures",
  "hex",
+ "jiff",
  "jsonschema",
  "log",
  "parking_lot 0.13.0",
@@ -172,21 +172,21 @@ dependencies = [
 
 [[package]]
 name = "anda_core"
-version = "0.17.2"
+version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c870615040ab2a662f2955e8090be5835ef84a08fb52e1ae95dc01cd585f2ca"
+checksum = "fe1070a00383c8cec32913c33c0f390ebd36c3ddbcfdcd5c278d8a1ecc0ee3ea"
 dependencies = [
  "anda_db_schema",
  "bytes",
  "candid",
  "cbor2",
- "chrono",
  "encoding_rs",
  "http",
  "ic-oss-types",
  "ic_auth_types",
  "ic_cose_types",
  "infer2",
+ "jiff",
  "object_store",
  "reqwest",
  "schemars",
@@ -309,9 +309,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.17.5"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c7de76e85b30ee3c3e446052a30b58366496d9af835e83eadb9bea762f2e458"
+checksum = "7b54f91b48c702591ee158ba36899ce22e926907d44c04a94385f7f728426302"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -325,7 +325,6 @@ dependencies = [
  "bytes",
  "candid",
  "cbor2",
- "chrono",
  "encoding_rs",
  "futures",
  "futures-util",
@@ -336,6 +335,7 @@ dependencies = [
  "ic_auth_verifier",
  "ic_cose_types",
  "infer2",
+ "jiff",
  "libc",
  "log",
  "mime",
@@ -364,12 +364,12 @@ dependencies = [
 
 [[package]]
 name = "anda_kip"
-version = "0.14.6"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3a84ec28700289eada09fd728fa2e1eaf281023e8775fffaca35feb8b482cc0"
+checksum = "83ba32472269925133b0c458818287c949e55b9ccc48527052bbb8642d6713b8"
 dependencies = [
  "async-trait",
- "chrono",
+ "jiff",
  "jsonschema",
  "nom 8.0.0",
  "nom-language",
@@ -381,9 +381,9 @@ dependencies = [
 
 [[package]]
 name = "anda_object_store"
-version = "0.14.0"
+version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12cbb689c4bc7c2855ef2be738a641ea5065c32f0632f1c6bd458bc8a24b6b6e"
+checksum = "080fe1455a6c61c6c6b10aa5cc8a355c725351a9390b7d2761068e33d743d713"
 dependencies = [
  "aes-gcm",
  "async-stream",
@@ -391,8 +391,8 @@ dependencies = [
  "base64 0.23.1",
  "bytes",
  "cbor2",
- "chrono",
  "futures",
+ "jiff",
  "log",
  "moka",
  "object_store",
@@ -2295,9 +2295,9 @@ dependencies = [
 
 [[package]]
 name = "ic-oss-types"
-version = "1.4.1"
+version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6bf07b405193aaedc387b04d2c0a70e86e1a312ac9e790978e6c4770f5df261c"
+checksum = "17420359fb93dc20054ac5ef4c20724b1d4c1092d708943fe8e9d145ef71dd94"
 dependencies = [
  "base64 0.23.1",
  "candid",
@@ -2706,6 +2706,58 @@ dependencies = [
  "include-flate",
  "jieba-macros",
  "rustc-hash",
+]
+
+[[package]]
+name = "jiff"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed5d126d72eb017f10b302e73bdeca446bea405ee449af4d9e7866d6b082d83e"
+dependencies = [
+ "jiff-core",
+ "jiff-static",
+ "jiff-tzdb-platform",
+ "log",
+ "portable-atomic",
+ "portable-atomic-util",
+ "serde_core",
+ "windows-link",
+]
+
+[[package]]
+name = "jiff-core"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6b46a105a9874634dd96231021526bf24ca04955a5998c59a9c7666e634b7b8"
+dependencies = [
+ "log",
+]
+
+[[package]]
+name = "jiff-static"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0127e9bde3c6130d6169e7d8d68676e4be69c4bf7573c308b6f960a5089c428"
+dependencies = [
+ "jiff-core",
+ "proc-macro2",
+ "quote",
+ "syn 3.0.10",
+]
+
+[[package]]
+name = "jiff-tzdb"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "12e71a1b68a875a44a33bb7a1dd84392cb77145a3367a552a3cfe6a4f5cf3afc"
+
+[[package]]
+name = "jiff-tzdb-platform"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc65b284afcfa8f6cf189c7274c805505314a7ab975c60e1f548bff56525420e"
+dependencies = [
+ "jiff-tzdb",
 ]
 
 [[package]]
@@ -3511,6 +3563,15 @@ name = "portable-atomic"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85"
+
+[[package]]
+name = "portable-atomic-util"
+version = "0.2.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10ab3eb7f3becc3a1cbc4f2c6f20267996cfc1a6467a873763411b136a122715"
+dependencies = [
+ "portable-atomic",
+]
 
 [[package]]
 name = "potential_utf"

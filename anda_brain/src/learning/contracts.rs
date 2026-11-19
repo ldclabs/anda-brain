@@ -356,7 +356,7 @@ async fn paired_trial_replays_a_real_protected_adoption_transaction() {
                 let deadline = anda_cognitive_nexus::time::parse(&plan.execution.cutoff).unwrap();
                 let now =
                     anda_cognitive_nexus::time::parse(&anda_cognitive_nexus::time::now()).unwrap();
-                if let Ok(delay) = (deadline - now).to_std() {
+                if let Ok(delay) = std::time::Duration::try_from(deadline.duration_since(now)) {
                     tokio::time::sleep(delay).await;
                 }
                 plan.execution

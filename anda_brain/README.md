@@ -15,8 +15,8 @@ language over REST or MCP; they never write KIP.
 | [../CHANGELOG.md](../CHANGELOG.md) | Release notes and known limits |
 
 This checkout tracks KIP `f63848e` and `kip://profiles/cognitive-memory@2.0.0`
-(content digest `sha256:6639aa46…`), on the 0.14 AndaDB / KIP / Cognitive Nexus
-stack and `anda_engine` 0.17. `Cargo.lock` records the resolved versions.
+(content digest `sha256:6639aa46…`). It uses AndaDB 0.14, KIP and Cognitive
+Nexus 0.15, and `anda_engine` 0.18. `Cargo.lock` records the resolved versions.
 
 ## Contents
 
